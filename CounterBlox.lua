@@ -83,7 +83,7 @@ local Window = Rayfield:CreateWindow({
         FileName = "PF_Config"
     },
 
-    Discord = { Enabled = true, Invite = "ukb5AqhBwK", RememberJoins = true },
+    Discord = { Enabled = true, Invite = "7ECZwyRS8j", RememberJoins = true },
 
     KeySystem = false -- IMPORTANT
 })
@@ -112,7 +112,7 @@ local function notify(t,c,d) pcall(function() Rayfield:Notify({ Title = t, Conte
 do
     local PASTE_RAW_KEY_URL = "https://pastebin.com/raw/QgqAaumb"
     local GET_KEY_URL       = "https://link-hub.net/1386339/FR3iYI9WV3ld"
-    local DISCORD_URL       = "https://discord.gg/ukb5AqhBwK"
+    local DISCORD_URL       = "https://discord.gg/7ECZwyRS8j"
 
     local CoreGui  = game:GetService("CoreGui")
     local Lighting = game:GetService("Lighting")
@@ -506,7 +506,7 @@ MiscTab:CreateButton({
     Name = "Copy Discord Invite",
     Callback = function()
         if setclipboard then
-            setclipboard("https://discord.gg/ukb5AqhBwK")
+            setclipboard("https://discord.gg/7ECZwyRS8j")
             notify("Discord", "Invite copied to clipboard!", 3)
         else
             notify("Discord", "Clipboard not supported", 4)

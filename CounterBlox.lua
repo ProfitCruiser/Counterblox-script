@@ -13,6 +13,7 @@ local Players           = game:GetService("Players")
 local GuiService        = game:GetService("GuiService")
 local HttpService       = game:GetService("HttpService")
 local TextService       = game:GetService("TextService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
@@ -719,15 +720,443 @@ local AutoFarm = {
     StatusLabel = nil,
 }
 
-local function setAutoFarmStatus(text)
+local function setAutoFarmStatus(text, color)
     AutoFarm.Status = text or AutoFarm.Status
     local label = AutoFarm.StatusLabel
     if label then
         label.Text = AutoFarm.Status
+        if color and label.TextColor3 ~= color then
+            label.TextColor3 = color
+        elseif not color then
+            label.TextColor3 = T.Neon
+        end
     end
 end
 
--- placeholder runtime hooks will be added when the new autofarm logic is ready
+--==================== RESTAURANT TYCOON 3 TOOLKIT ====================--
+local function waitPath(root, path)
+    local node = root
+    for part in string.gmatch(path, "[^/]+") do
+        node = node:WaitForChild(part)
+    end
+    return node
+end
+
+local function buildRT3Toolkit(config)
+    local TaskCompleted = waitPath(ReplicatedStorage, "Events/Restaurant/TaskCompleted")
+    local Interacted    = waitPath(ReplicatedStorage, "Events/Restaurant/Interactions/Interacted")
+    local CookInput     = waitPath(ReplicatedStorage, "Events/Cook/CookInputRequested")
+    local GrabFood      = waitPath(ReplicatedStorage, "Events/Restaurant/GrabFood")
+
+    local Tycoon = waitPath(workspace, config.TycoonPath)
+    local OrderCounterModel = waitPath(workspace, config.OrderCounterPath)
+    local KitchenModel      = waitPath(workspace, config.KitchenPath)
+    local OvenModel         = waitPath(workspace, config.OvenPath)
+
+    local tables = {}
+    for _, tbl in ipairs(config.Tables) do
+        tables[tbl.Name] = waitPath(workspace, tbl.ModelPath)
+    end
+
+    local function getFoodModelForTable(tblModel)
+        return tblModel:WaitForChild("Trash"):WaitForChild("Food")
+    end
+
+    local function near(a, b, maxDist)
+        maxDist = maxDist or 18
+        local ap = (a:IsA("BasePart") and a.Position) or (a.PrimaryPart and a.PrimaryPart.Position)
+        local bp = (b:IsA("BasePart") and b.Position) or (b.PrimaryPart and b.PrimaryPart.Position)
+        if not ap or not bp then return true end
+        return (ap - bp).Magnitude <= maxDist
+    end
+
+    local function myRoot()
+        local plr = Players.LocalPlayer
+        local character = plr.Character or plr.CharacterAdded:Wait()
+        return character:WaitForChild("HumanoidRootPart")
+    end
+
+    local function buildTaskPayload(fields)
+        local payload = {}
+        payload.Name = assert(fields.Name, "Task name missing")
+        payload.Tycoon = fields.Tycoon or Tycoon
+        if fields.GroupId then payload.GroupId = tostring(fields.GroupId) end
+        if fields.FurnitureModel then payload.FurnitureModel = fields.FurnitureModel end
+        if fields.CustomerId then payload.CustomerId = tostring(fields.CustomerId) end
+        if fields.FoodModel then payload.FoodModel = fields.FoodModel end
+        return { payload }
+    end
+
+    local function buildInteractedOrderCounter(args)
+        local rootPart = workspace:FindFirstChild("Temp") and workspace.Temp:FindFirstChild("Part")
+        local prompt = rootPart and rootPart:FindFirstChild(args.Id or "0")
+        local fallbackPart = rootPart or Instance.new("Part")
+        local fallbackPrompt = prompt or Instance.new("ProximityPrompt")
+        return Tycoon, {
+            WorldPosition   = (fallbackPart and fallbackPart.Position) or Vector3.new(),
+            HoldDuration    = 0.375,
+            Part            = fallbackPart,
+            TemporaryPart   = fallbackPart,
+            Model           = args.Model or OrderCounterModel,
+            InteractionType = "OrderCounter",
+            Prompt          = fallbackPrompt,
+            ActionText      = "Cook",
+            Id              = tostring(args.Id or "0"),
+        }
+    end
+
+    local Actions = {}
+
+    function Actions.SendToTable(groupId, tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "SendToTable",
+            GroupId = groupId,
+            FurnitureModel = tableModel,
+        })))
+    end
+
+    function Actions.TakeOrder(groupId, customerId)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "TakeOrder",
+            GroupId = groupId,
+            CustomerId = customerId,
+        })))
+    end
+
+    function Actions.PullOrderSlip(idStr)
+        local a1, a2 = buildInteractedOrderCounter({ Id = idStr })
+        Interacted:FireServer(a1, a2)
+    end
+
+    function Actions.KitchenInteract()
+        CookInput:FireServer("Interact", KitchenModel, "Kitchen")
+    end
+
+    function Actions.KitchenComplete()
+        CookInput:FireServer("CompleteTask", KitchenModel, "Kitchen")
+    end
+
+    function Actions.OvenInteract()
+        CookInput:FireServer("Interact", OvenModel, "Oven")
+    end
+
+    function Actions.OvenComplete(didBurnFlag)
+        CookInput:FireServer("CompleteTask", OvenModel, "Oven", didBurnFlag == true)
+    end
+
+    function Actions.GrabFoodAtTable(tableModel)
+        return GrabFood:InvokeServer(getFoodModelForTable(tableModel))
+    end
+
+    function Actions.Serve(groupId, customerId, tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "Serve",
+            GroupId = groupId,
+            CustomerId = customerId,
+            FoodModel = getFoodModelForTable(tableModel),
+        })))
+    end
+
+    function Actions.CollectBill(tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "CollectBill",
+            FurnitureModel = tableModel,
+        })))
+    end
+
+    function Actions.CollectDishes(tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "CollectDishes",
+            FurnitureModel = tableModel,
+        })))
+    end
+
+    local toolkit = {
+        Tycoon = Tycoon,
+        Models = {
+            OrderCounter = OrderCounterModel,
+            Kitchen = KitchenModel,
+            Oven = OvenModel,
+        },
+        Tables = tables,
+        Actions = Actions,
+        Near = near,
+        MyRoot = myRoot,
+    }
+
+    getgenv().RT3 = toolkit
+
+    return toolkit
+end
+
+local AutoFarmConfig = {
+    TycoonPath = "Tycoons/Tycoon",
+    SurfacePath = "Tycoons/Tycoon/Items/Surface",
+    OrderCounterPath = "Tycoons/Tycoon/Items/Surface/K16",
+    KitchenPath = "Tycoons/Tycoon/Items/Surface/K15",
+    OvenPath = "Tycoons/Tycoon/Items/Surface/K28",
+    Tables = {
+        {
+            Name = "T10",
+            ModelPath = "Tycoons/Tycoon/Items/Surface/T10",
+            GroupIds = {"1", "2"},
+            SeatIds = {"1", "2"},
+            OrderSlipIds = {"0", "1"},
+            CookingSteps = {
+                {"KitchenInteract"},
+                {"Delay", 0.35},
+                {"KitchenComplete"},
+                {"OvenInteract"},
+                {"Delay", 0.4},
+                {"OvenComplete", false},
+                {"KitchenInteract"},
+                {"Delay", 0.35},
+                {"KitchenComplete"},
+            },
+        },
+    },
+    Delays = {
+        BetweenActions = 0.3,
+        BetweenOrders = 0.25,
+        BetweenSlips = 0.35,
+        BetweenServes = 0.45,
+        BetweenGroups = 0.6,
+        AfterCleanup = 0.5,
+        CyclePause = 1.5,
+        WaitNear = 0.25,
+    },
+    ProximityRange = 24,
+}
+
+local function deepCopyTables(configTables, toolkit)
+    local copies = {}
+    for _, tbl in ipairs(configTables) do
+        local model = toolkit.Tables[tbl.Name]
+        table.insert(copies, {
+            Name = tbl.Name,
+            Model = model,
+            GroupIds = tbl.GroupIds,
+            SeatIds = tbl.SeatIds,
+            OrderSlipIds = tbl.OrderSlipIds,
+            CookingSteps = tbl.CookingSteps,
+        })
+    end
+    return copies
+end
+
+AutoFarm.Config = AutoFarmConfig
+AutoFarm.RuntimeToken = 0
+AutoFarm.Running = false
+AutoFarm.Toolkit = nil
+
+function AutoFarm:IsActive(token)
+    return self.Enabled and self.RuntimeToken == token
+end
+
+function AutoFarm:ResetToolkit()
+    self.Toolkit = nil
+end
+
+function AutoFarm:ensureToolkit()
+    if self.Toolkit then return self.Toolkit end
+    setAutoFarmStatus("Setter opp RT3-toolkit…")
+    local toolkit = buildRT3Toolkit(self.Config)
+    self.Toolkit = toolkit
+    return toolkit
+end
+
+function AutoFarm:waitForActive(token, duration)
+    duration = duration or self.Config.Delays.BetweenActions
+    local elapsed = 0
+    while elapsed < duration do
+        if not self:IsActive(token) then return false end
+        local step = math.min(0.1, duration - elapsed)
+        elapsed += step
+        task.wait(step)
+    end
+    return self:IsActive(token)
+end
+
+function AutoFarm:ensureProximity(token, toolkit, model, label)
+    if not model then
+        setAutoFarmStatus("Fant ikke modell for " .. (label or "ukjent") .. ".", T.Warn)
+        return "missing"
+    end
+    if not self:IsActive(token) then return false end
+    while self:IsActive(token) and not toolkit.Near(toolkit.MyRoot(), model, self.Config.ProximityRange) do
+        setAutoFarmStatus("Venter til du står nær " .. (label or model.Name) .. "…", T.Warn)
+        if not self:waitForActive(token, self.Config.Delays.WaitNear) then
+            return false
+        end
+    end
+    return self:IsActive(token)
+end
+
+function AutoFarm:runCooking(token, actions, steps)
+    for _, step in ipairs(steps or {}) do
+        if not self:IsActive(token) then return false end
+        local action = step[1]
+        if action == "Delay" then
+            if not self:waitForActive(token, step[2] or self.Config.Delays.BetweenActions) then
+                return false
+            end
+        else
+            local fn = actions[action]
+            if fn then
+                fn(step[2])
+            end
+            if not self:waitForActive(token, self.Config.Delays.BetweenActions) then
+                return false
+            end
+        end
+    end
+    return self:IsActive(token)
+end
+
+function AutoFarm:runGroupPipeline(token, toolkit, tableProfile)
+    local actions = toolkit.Actions
+    local delays = self.Config.Delays
+    local tableModel = tableProfile.Model
+
+    for _, groupId in ipairs(tableProfile.GroupIds or {}) do
+        if not self:IsActive(token) then return false end
+        setAutoFarmStatus("Plasserer gruppe " .. groupId .. " ved " .. tableProfile.Name .. "…")
+        actions.SendToTable(groupId, tableModel)
+        if not self:waitForActive(token, delays.BetweenActions) then return false end
+
+        setAutoFarmStatus("Tar ordre for gruppe " .. groupId .. "…")
+        for _, seatId in ipairs(tableProfile.SeatIds or {}) do
+            if not self:IsActive(token) then return false end
+            actions.TakeOrder(groupId, seatId)
+            if not self:waitForActive(token, delays.BetweenOrders) then return false end
+        end
+
+        setAutoFarmStatus("Henter lapper for " .. tableProfile.Name .. "…")
+        for _, slipId in ipairs(tableProfile.OrderSlipIds or {}) do
+            if not self:IsActive(token) then return false end
+            actions.PullOrderSlip(slipId)
+            if not self:waitForActive(token, delays.BetweenSlips) then return false end
+        end
+
+        setAutoFarmStatus("Tilbereder retter for " .. tableProfile.Name .. "…")
+        if not self:runCooking(token, actions, tableProfile.CookingSteps) then
+            return false
+        end
+
+        setAutoFarmStatus("Serverer gruppe " .. groupId .. "…")
+        for _, seatId in ipairs(tableProfile.SeatIds) do
+            if not self:IsActive(token) then return false end
+            actions.GrabFoodAtTable(tableModel)
+            if not self:waitForActive(token, delays.BetweenActions) then return false end
+            actions.Serve(groupId, seatId, tableModel)
+            if not self:waitForActive(token, delays.BetweenServes) then return false end
+        end
+
+        setAutoFarmStatus("Tar betaling på " .. tableProfile.Name .. "…")
+        actions.CollectBill(tableModel)
+        if not self:waitForActive(token, delays.BetweenActions) then return false end
+
+        setAutoFarmStatus("Rydder " .. tableProfile.Name .. "…")
+        actions.CollectDishes(tableModel)
+        if not self:waitForActive(token, delays.AfterCleanup) then return false end
+
+        if not self:waitForActive(token, delays.BetweenGroups) then return false end
+    end
+
+    return self:IsActive(token)
+end
+
+function AutoFarm:runLoop(token)
+    local toolkit
+    local tableProfiles
+    while self:IsActive(token) do
+        if not self.Toolkit then
+            toolkit = self:ensureToolkit()
+            tableProfiles = deepCopyTables(self.Config.Tables, toolkit)
+        elseif toolkit ~= self.Toolkit then
+            toolkit = self.Toolkit
+            tableProfiles = deepCopyTables(self.Config.Tables, toolkit)
+        end
+        if not toolkit then
+            setAutoFarmStatus("Toolkit mangler — stoppet.", T.Warn)
+            break
+        end
+        for _, profile in ipairs(tableProfiles or {}) do
+            if not self:IsActive(token) then break end
+            local proximity = self:ensureProximity(token, toolkit, profile.Model, profile.Name)
+            local skipProfile = false
+            if proximity == "missing" then
+                skipProfile = true
+                if not self:waitForActive(token, self.Config.Delays.CyclePause) then
+                    break
+                end
+            elseif not proximity then
+                break
+            end
+            if not skipProfile then
+                if not self:IsActive(token) then break end
+                local ok = self:runGroupPipeline(token, toolkit, profile)
+                if not ok then break end
+            end
+        end
+        if not self:IsActive(token) then break end
+        setAutoFarmStatus("Syklus ferdig — venter…")
+        if not self:waitForActive(token, self.Config.Delays.CyclePause) then
+            break
+        end
+    end
+end
+
+function AutoFarm:Start()
+    if self.Running then return end
+    self.Enabled = true
+    self.RuntimeToken += 1
+    local token = self.RuntimeToken
+    self.Running = true
+    task.spawn(function()
+        local hadError = false
+        local ok, err = pcall(function()
+            setAutoFarmStatus("Initialiserer…")
+            self:runLoop(token)
+        end)
+        if not ok then
+            hadError = true
+            setAutoFarmStatus("Feil: " .. trim(err), T.Warn)
+        end
+        if self.RuntimeToken == token then
+            self.Enabled = false
+        end
+        self.Running = false
+        if not self.Enabled then
+            if hadError then
+                task.delay(2.5, function()
+                    if not self.Enabled and not self.Running then
+                        setAutoFarmStatus("Idle")
+                    end
+                end)
+            else
+                setAutoFarmStatus("Idle")
+            end
+        end
+    end)
+end
+
+function AutoFarm:Stop()
+    if not self.Enabled and not self.Running then
+        setAutoFarmStatus("Idle")
+        return
+    end
+    self.Enabled = false
+    self.RuntimeToken += 1
+    setAutoFarmStatus("Stopper…")
+    task.spawn(function()
+        while self.Running do
+            task.wait(0.1)
+        end
+        setAutoFarmStatus("Idle")
+    end)
+end
+
 --==================== PAGES & CONTROLS ====================--
 local AutoFarmP = newPage("Autofarm")
 local UiP      = newPage("UI")
@@ -739,14 +1168,13 @@ tabButton("Info", InfoP)
 AutoFarmP.Visible = true
 
 -- Autofarm overview
-mkToggle(AutoFarmP,"Enable Autofarm", AutoFarm.Enabled, function(v)
-    AutoFarm.Enabled = v
+mkToggle(AutoFarmP, "Enable Autofarm", AutoFarm.Enabled, function(v)
     if v then
-        setAutoFarmStatus("Preparing routes…")
+        AutoFarm:Start()
     else
-        setAutoFarmStatus("Idle")
+        AutoFarm:Stop()
     end
-end, "Activate the upcoming autofarm module when your script integration is ready.")
+end, "Starter/stopper for den komplette Restaurant Tycoon 3-autofarmen.")
 
 local statusRow, statusLabel = rowBase(AutoFarmP, "Autofarm Status", "Shows whether the automation core is running.")
 statusLabel.Text = "Autofarm Status"
@@ -764,12 +1192,13 @@ statusValue.TextYAlignment = Enum.TextYAlignment.Center
 
 AutoFarm.StatusLabel = statusValue
 
-local stubButton = mkButton(AutoFarmP, "Autofarm Stub Callback", function()
-    setAutoFarmStatus("Stub triggered — attach your module.")
-end, {buttonText="Stub"}, "Use this entry point to wire up the new autofarm logic when it is finished.")
+local refreshButton = mkButton(AutoFarmP, "Oppdater tycoon-referanser", function()
+    AutoFarm:ResetToolkit()
+    setAutoFarmStatus("Toolkit oppdatert — bygges på nytt i neste syklus.")
+end, {buttonText = "Oppdater"}, "Rescanner tycoonen for bord/stasjoner hvis du har redesignet layouten din.")
 
 RunService.RenderStepped:Connect(function()
-    setInteractable(stubButton.Row, AutoFarm.Enabled)
+    setInteractable(refreshButton.Row, not AutoFarm.Running)
 end)
 
 -- UI helpers
@@ -831,7 +1260,7 @@ creditSub.BackgroundTransparency = 1
 creditSub.Position = UDim2.new(0, 0, 0, 24)
 creditSub.Size = UDim2.new(1, -140, 1, -28)
 creditSub.Font = Enum.Font.Gotham
-creditSub.Text = "Autofarm build coming soon — keep this shell for visuals."
+creditSub.Text = "Restaurant Tycoon 3 autofarmen er live — juster tabellen i AutoFarm.Config om du har andre bord."
 creditSub.TextColor3 = T.Subtle
 creditSub.TextSize = 12
 creditSub.TextWrapped = true

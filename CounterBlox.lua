@@ -53,6 +53,7 @@ local function stroke(o, col, thickness, transparency)
     s.Transparency = transparency or 0
     s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     s.Parent = o
+    return s
 end
 
 local function pad(o, px)
@@ -93,9 +94,50 @@ end
 local DEFAULT_KEY = "FREE" -- change via getgenv().AuroraKey
 local KEY_LINK    = "https://discord.gg/Pgn4NMWDH8"
 
+local function resolveExternalKey()
+    local ok, env = pcall(function()
+        return getgenv and getgenv()
+    end)
+    if ok and type(env) == "table" and env.AuroraKey ~= nil then
+        return env.AuroraKey
+    end
+    if type(shared) == "table" and shared.AuroraKey ~= nil then
+        return shared.AuroraKey
+    end
+    if type(_G) == "table" and _G.AuroraKey ~= nil then
+        return _G.AuroraKey
+    end
+    return nil
+end
+
+local function expectedKey()
+    local key = resolveExternalKey()
+    if key == nil then
+        return DEFAULT_KEY
+    end
+    return key
+end
+
+local function gateHint()
+    local exp = expectedKey()
+    if exp == false then
+        return "Nøkkel deaktivert via AuroraKey = false"
+    elseif exp == "" then
+        return "Skriv hvilken som helst tekst for å låse opp"
+    end
+
+    local value = tostring(exp)
+    if value:lower() == tostring(DEFAULT_KEY):lower() then
+        return "Standard nøkkel: " .. value
+    end
+    return "Tilpasset nøkkel: " .. value
+end
+
 local function checkKey(input)
-    local expected = getgenv and getgenv().AuroraKey or DEFAULT_KEY
-    if expected == "" then
+    local expected = expectedKey()
+    if expected == false then
+        return true
+    elseif expected == "" then
         return trim(input) ~= ""
     end
     return trim(input):lower() == tostring(expected):lower()
@@ -625,7 +667,7 @@ InputHolder.BackgroundColor3 = Theme.Ink
 InputHolder.Size = UDim2.new(1, 0, 0, 40)
 InputHolder.LayoutOrder = 2
 corner(InputHolder, 12)
-stroke(InputHolder, Theme.Stroke, 1, 0.45)
+local InputStroke = stroke(InputHolder, Theme.Stroke, 1, 0.45)
 
 local KeyBox = Instance.new("TextBox", InputHolder)
 KeyBox.BackgroundTransparency = 1
@@ -672,24 +714,45 @@ local StatusLabel = Instance.new("TextLabel", Field)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.Size = UDim2.new(1, 0, 0, 20)
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.TextColor3 = Theme.Subtle
-StatusLabel.Text = "Standard nøkkel: " .. DEFAULT_KEY
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.TextSize = 14
 StatusLabel.LayoutOrder = 4
 
-local function updateGateStatus(text, good)
+local function updateGateStatus(text, state)
     StatusLabel.Text = text or ""
-    StatusLabel.TextColor3 = good and Theme.Good or Theme.Subtle
+    if state == "success" then
+        StatusLabel.TextColor3 = Theme.Good
+    elseif state == "error" then
+        StatusLabel.TextColor3 = Theme.Warn
+    else
+        StatusLabel.TextColor3 = Theme.Subtle
+    end
+end
+
+local function refreshKeyHint()
+    updateGateStatus(gateHint())
+    local expected = expectedKey()
+    if expected == false then
+        KeyBox.PlaceholderText = "Ingen nøkkel kreves"
+    elseif expected == "" then
+        KeyBox.PlaceholderText = "Valgfritt – skriv noe"
+    else
+        KeyBox.PlaceholderText = tostring(expected)
+    end
 end
 
 CopyBtn.MouseButton1Click:Connect(function()
     if setclipboard then
         setclipboard(KEY_LINK)
-        updateGateStatus("Lenke kopiert til utklippstavlen", true)
+        updateGateStatus("Lenke kopiert til utklippstavlen", "success")
     else
-        updateGateStatus("Kan ikke kopiere i denne executoren", false)
+        updateGateStatus("Kan ikke kopiere i denne executoren", "error")
     end
+    task.delay(2, function()
+        if GateGui.Enabled then
+            refreshKeyHint()
+        end
+    end)
 end)
 
 local function openPanel()
@@ -699,17 +762,55 @@ local function openPanel()
     RootGui.Enabled = true
 end
 
-UnlockBtn.MouseButton1Click:Connect(function()
-    if checkKey(KeyBox.Text) then
-        updateGateStatus("Godkjent!", true)
+local function setInputFeedback(state)
+    local bg = Theme.Ink
+    local strokeColor = Theme.Stroke
+    if state == "success" then
+        strokeColor = Theme.Good
+    elseif state == "error" then
+        bg = Color3.fromRGB(58, 24, 38)
+        strokeColor = Theme.Warn
+    end
+    tween(InputHolder, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = bg})
+    if InputStroke then
+        tween(InputStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Color = strokeColor})
+    end
+end
+
+local function attemptUnlock()
+    local input = KeyBox.Text
+    if checkKey(input) then
+        setInputFeedback("success")
+        updateGateStatus("Godkjent!", "success")
+        KeyBox.Text = ""
         tween(Card, TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 1})
         Blur.Enabled = true
         Blur.Size = 12
         task.delay(0.32, openPanel)
     else
-        updateGateStatus("Feil nøkkel. Prøv igjen.", false)
+        setInputFeedback("error")
+        updateGateStatus("Feil nøkkel. Prøv igjen.", "error")
+        task.delay(0.4, function()
+            if GateGui.Enabled then
+                setInputFeedback()
+                refreshKeyHint()
+            end
+        end)
+    end
+end
+
+UnlockBtn.MouseButton1Click:Connect(attemptUnlock)
+
+KeyBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        attemptUnlock()
     end
 end)
+
+refreshKeyHint()
+if expectedKey() == false then
+    task.defer(attemptUnlock)
+end
 
 --// Main panel -----------------------------------------
 RootGui.Enabled = false

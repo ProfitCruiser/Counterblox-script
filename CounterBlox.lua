@@ -1,7 +1,7 @@
 --====================================================--
 -- AURORA PANEL — ProfitCruiser (fixed key→panel flow)
 -- Full redesign: Compact 2-col layout + sections + gating
--- Aimbot, ESP (Highlight), Crosshair, Profiles
+-- Clean shell prepared for upcoming Autofarm module
 --====================================================--
 
 --// Services
@@ -13,6 +13,7 @@ local Players           = game:GetService("Players")
 local GuiService        = game:GetService("GuiService")
 local HttpService       = game:GetService("HttpService")
 local TextService       = game:GetService("TextService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera      = workspace.CurrentCamera
@@ -277,11 +278,6 @@ end)
 
 Gate.Enabled=true
 Blur.Enabled=true; TweenService:Create(Blur,TweenInfo.new(0.2),{Size=8}):Play()
-
--- Ensure AA_GUI is disabled when gate is open
-Gate:GetPropertyChangedSignal("Enabled"):Connect(function()
-    AA_GUI.Enabled = not Gate.Enabled
-end)
 
 --==================== MAIN APP ====================--
 local App = Instance.new("ScreenGui")
@@ -717,495 +713,525 @@ local function mkCycle(parent, name, options, default, cb, desc)
     }
 end
 
---==================== FEATURE STATE ====================--
-local AA={
-    Enabled=false,
-    Strength=0.15,
-    PartName="Head",
-    ShowFOV=false,
-    FOVRadiusPx=180,
-    MaxDistance=250,
-    MinDistance=0,
-    Deadzone=4,
-    RequireRMB=false,
-    WallCheck=true,
-    DynamicPart=false,
-    StickyAim=false,
-    StickTime=0.35,
-    AdaptiveSmoothing=false,
-    CloseRangeBoost=0.2,
-    Prediction=0,
-    TargetSort="Hybrid",
-    DistanceWeight=0.02,
-    ReactionDelay=0,
-    ReactionJitter=0,
-    VerticalOffset=0,
-}
-local ESP={
-    Enabled=false,
-    EnemiesOnly=false,
-    UseDistance=true,
-    MaxDistance=1200,
-    EnemyColor=Color3.fromRGB(255,70,70),
-    FriendColor=Color3.fromRGB(0,255,140),
-    NeutralColor=Color3.fromRGB(255,255,0),
-    FillTransparency=0.5,
-    OutlineTransparency=0,
-    ThroughWalls=true,
-    ColorIntensity=1,
-}
-local Cross={
-    Enabled=false,
-    Color=Color3.fromRGB(0,255,200),
-    Opacity=0.9,
-    Size=8,
-    Gap=4,
-    Thickness=2,
-    CenterDot=false,
-    DotSize=2,
-    DotOpacity=1,
-    UseTeamColor=false,
-    Rainbow=false,
-    RainbowSpeed=1,
-    Pulse=false,
-    PulseSpeed=2.5,
+--==================== AUTOFARM STATE ====================--
+local AutoFarm = {
+    Enabled = false,
+    Status = "Idle",
+    StatusLabel = nil,
 }
 
---==================== RUNTIME / DRAW ====================--
--- FOV ring
-local AA_GUI=Instance.new("ScreenGui"); AA_GUI.Name="PC_FOV"; AA_GUI.IgnoreGuiInset=true; AA_GUI.ResetOnSpawn=false; AA_GUI.DisplayOrder=45; AA_GUI.Parent=safeParent()
-local FOV=Instance.new("Frame", AA_GUI); FOV.AnchorPoint=Vector2.new(0.5,0.5); FOV.Position=UDim2.fromScale(0.5,0.5); FOV.BackgroundTransparency=1; FOV.Visible=false
-local FStroke=Instance.new("UIStroke", FOV); FStroke.Thickness=2; FStroke.Transparency=0.15; FStroke.Color=Color3.fromRGB(0,255,140); corner(FOV, math.huge)
-
--- Crosshair
-local CrossGui=Instance.new("ScreenGui"); CrossGui.Name="PC_Crosshair"; CrossGui.IgnoreGuiInset=true; CrossGui.ResetOnSpawn=false; CrossGui.DisplayOrder=44; CrossGui.Parent=safeParent()
-local function crossPart() local f=Instance.new("Frame"); f.BorderSizePixel=0; f.Parent=CrossGui; f.Visible=false; return f end
-local chL,chR,chU,chD = crossPart(),crossPart(),crossPart(),crossPart()
-local dot = crossPart()
-local function updCross()
-    if not Cross.Enabled then for _,f in ipairs({chL,chR,chU,chD,dot}) do f.Visible=false end return end
-    local vp=Camera.ViewportSize; local cx,cy=vp.X*0.5,vp.Y*0.5; local g,s,t=Cross.Gap,Cross.Size,Cross.Thickness
-
-    local color = Cross.Color
-    if Cross.Rainbow then
-        local h = (os.clock() * math.max(Cross.RainbowSpeed, 0)) % 1
-        color = Color3.fromHSV(h, 0.9, 1)
-    elseif Cross.UseTeamColor and LocalPlayer.TeamColor then
-        color = LocalPlayer.TeamColor.Color
-    end
-
-    local pulseFactor = 1
-    if Cross.Pulse then
-        local wave = math.sin(os.clock() * math.max(Cross.PulseSpeed, 0.01) * math.pi * 2) * 0.5 + 0.5
-        pulseFactor = 0.6 + 0.4 * wave
-    end
-
-    local baseOpacity = math.clamp(Cross.Opacity * pulseFactor, 0, 1)
-    local dotOpacity = math.clamp(Cross.DotOpacity * pulseFactor, 0, 1)
-
-    local function sty(f,opa)
-        f.BackgroundColor3=color
-        f.BackgroundTransparency=1-math.clamp(opa or baseOpacity,0,1)
-    end
-    chU.Size=UDim2.fromOffset(t,s); chU.Position=UDim2.fromOffset(cx - t/2, cy - g - s)
-    chD.Size=UDim2.fromOffset(t,s); chD.Position=UDim2.fromOffset(cx - t/2, cy + g)
-    chL.Size=UDim2.fromOffset(s,t); chL.Position=UDim2.fromOffset(cx - g - s, cy - t/2)
-    chR.Size=UDim2.fromOffset(s,t); chR.Position=UDim2.fromOffset(cx + g, cy - t/2)
-    for _,f in ipairs({chL,chR,chU,chD}) do sty(f); f.Visible=true end
-    dot.Size=UDim2.fromOffset(Cross.DotSize,Cross.DotSize); dot.Position=UDim2.fromOffset(cx - Cross.DotSize/2, cy - Cross.DotSize/2); sty(dot, dotOpacity); dot.Visible=Cross.CenterDot
-end
-RunService.RenderStepped:Connect(updCross)
-
--- Targeting helpers
-local function isEnemy(p) if p==LocalPlayer then return false end if LocalPlayer.Team and p.Team then return LocalPlayer.Team~=p.Team end return true end
-local function aimPart(c)
-    if not c then return nil end
-    if AA.DynamicPart then
-        for _,name in ipairs({"Head","UpperTorso","HumanoidRootPart","Torso"}) do
-            local part=c:FindFirstChild(name)
-            if part and part:IsA("BasePart") then return part end
+local function setAutoFarmStatus(text, color)
+    AutoFarm.Status = text or AutoFarm.Status
+    local label = AutoFarm.StatusLabel
+    if label then
+        label.Text = AutoFarm.Status
+        if color and label.TextColor3 ~= color then
+            label.TextColor3 = color
+        elseif not color then
+            label.TextColor3 = T.Neon
         end
     end
-    local p=c:FindFirstChild(AA.PartName)
-    if not(p and p:IsA("BasePart")) then p=(c:FindFirstChild("UpperTorso") or c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Head")) end
-    return p
 end
-local function hasLOS(part,char)
-    if not AA.WallCheck then return true end
-    local origin=Camera.CFrame.Position; local dir=(part.Position-origin)
-    local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.FilterDescendantsInstances={LocalPlayer.Character, char}; rp.IgnoreWater=true
-    return workspace:Raycast(origin, dir, rp)==nil
+
+--==================== RESTAURANT TYCOON 3 TOOLKIT ====================--
+local function waitPath(root, path)
+    local node = root
+    for part in string.gmatch(path, "[^/]+") do
+        node = node:WaitForChild(part)
+    end
+    return node
 end
-local function buildCandidate(pl, my, cx, cy)
-    if not isEnemy(pl) then return nil end
-    local char = pl.Character
-    if not char then return nil end
-    local part = aimPart(char)
-    if not part then return nil end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
-    local maxDist = math.max(0, AA.MaxDistance or 0)
-    local minDist = math.clamp(AA.MinDistance or 0, 0, maxDist)
-    local dist = (hrp.Position-my.Position).Magnitude
-    if dist > maxDist or dist < minDist then return nil end
-    local sp,on = Camera:WorldToViewportPoint(part.Position)
-    if not on then return nil end
-    local dx,dy = sp.X-cx, sp.Y-cy
-    local pd = (dx*dx+dy*dy)^0.5
-    if pd>AA.FOVRadiusPx then return nil end
-    if not hasLOS(part, char) then return nil end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    return {
-        player = pl,
-        character = char,
-        part = part,
-        hrp = hrp,
-        humanoid = hum,
-        distance = dist,
-        pixelDist = pd,
-        screen = Vector2.new(sp.X, sp.Y),
-        velocity = (hrp.AssemblyLinearVelocity or part.AssemblyLinearVelocity or Vector3.zero),
+
+local function buildRT3Toolkit(config)
+    local TaskCompleted = waitPath(ReplicatedStorage, "Events/Restaurant/TaskCompleted")
+    local Interacted    = waitPath(ReplicatedStorage, "Events/Restaurant/Interactions/Interacted")
+    local CookInput     = waitPath(ReplicatedStorage, "Events/Cook/CookInputRequested")
+    local GrabFood      = waitPath(ReplicatedStorage, "Events/Restaurant/GrabFood")
+
+    local Tycoon = waitPath(workspace, config.TycoonPath)
+    local OrderCounterModel = waitPath(workspace, config.OrderCounterPath)
+    local KitchenModel      = waitPath(workspace, config.KitchenPath)
+    local OvenModel         = waitPath(workspace, config.OvenPath)
+
+    local tables = {}
+    for _, tbl in ipairs(config.Tables) do
+        tables[tbl.Name] = waitPath(workspace, tbl.ModelPath)
+    end
+
+    local function getFoodModelForTable(tblModel)
+        return tblModel:WaitForChild("Trash"):WaitForChild("Food")
+    end
+
+    local function near(a, b, maxDist)
+        maxDist = maxDist or 18
+        local ap = (a:IsA("BasePart") and a.Position) or (a.PrimaryPart and a.PrimaryPart.Position)
+        local bp = (b:IsA("BasePart") and b.Position) or (b.PrimaryPart and b.PrimaryPart.Position)
+        if not ap or not bp then return true end
+        return (ap - bp).Magnitude <= maxDist
+    end
+
+    local function myRoot()
+        local plr = Players.LocalPlayer
+        local character = plr.Character or plr.CharacterAdded:Wait()
+        return character:WaitForChild("HumanoidRootPart")
+    end
+
+    local function buildTaskPayload(fields)
+        local payload = {}
+        payload.Name = assert(fields.Name, "Task name missing")
+        payload.Tycoon = fields.Tycoon or Tycoon
+        if fields.GroupId then payload.GroupId = tostring(fields.GroupId) end
+        if fields.FurnitureModel then payload.FurnitureModel = fields.FurnitureModel end
+        if fields.CustomerId then payload.CustomerId = tostring(fields.CustomerId) end
+        if fields.FoodModel then payload.FoodModel = fields.FoodModel end
+        return { payload }
+    end
+
+    local function buildInteractedOrderCounter(args)
+        local rootPart = workspace:FindFirstChild("Temp") and workspace.Temp:FindFirstChild("Part")
+        local prompt = rootPart and rootPart:FindFirstChild(args.Id or "0")
+        local fallbackPart = rootPart or Instance.new("Part")
+        local fallbackPrompt = prompt or Instance.new("ProximityPrompt")
+        return Tycoon, {
+            WorldPosition   = (fallbackPart and fallbackPart.Position) or Vector3.new(),
+            HoldDuration    = 0.375,
+            Part            = fallbackPart,
+            TemporaryPart   = fallbackPart,
+            Model           = args.Model or OrderCounterModel,
+            InteractionType = "OrderCounter",
+            Prompt          = fallbackPrompt,
+            ActionText      = "Cook",
+            Id              = tostring(args.Id or "0"),
+        }
+    end
+
+    local Actions = {}
+
+    function Actions.SendToTable(groupId, tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "SendToTable",
+            GroupId = groupId,
+            FurnitureModel = tableModel,
+        })))
+    end
+
+    function Actions.TakeOrder(groupId, customerId)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "TakeOrder",
+            GroupId = groupId,
+            CustomerId = customerId,
+        })))
+    end
+
+    function Actions.PullOrderSlip(idStr)
+        local a1, a2 = buildInteractedOrderCounter({ Id = idStr })
+        Interacted:FireServer(a1, a2)
+    end
+
+    function Actions.KitchenInteract()
+        CookInput:FireServer("Interact", KitchenModel, "Kitchen")
+    end
+
+    function Actions.KitchenComplete()
+        CookInput:FireServer("CompleteTask", KitchenModel, "Kitchen")
+    end
+
+    function Actions.OvenInteract()
+        CookInput:FireServer("Interact", OvenModel, "Oven")
+    end
+
+    function Actions.OvenComplete(didBurnFlag)
+        CookInput:FireServer("CompleteTask", OvenModel, "Oven", didBurnFlag == true)
+    end
+
+    function Actions.GrabFoodAtTable(tableModel)
+        return GrabFood:InvokeServer(getFoodModelForTable(tableModel))
+    end
+
+    function Actions.Serve(groupId, customerId, tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "Serve",
+            GroupId = groupId,
+            CustomerId = customerId,
+            FoodModel = getFoodModelForTable(tableModel),
+        })))
+    end
+
+    function Actions.CollectBill(tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "CollectBill",
+            FurnitureModel = tableModel,
+        })))
+    end
+
+    function Actions.CollectDishes(tableModel)
+        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+            Name = "CollectDishes",
+            FurnitureModel = tableModel,
+        })))
+    end
+
+    local toolkit = {
+        Tycoon = Tycoon,
+        Models = {
+            OrderCounter = OrderCounterModel,
+            Kitchen = KitchenModel,
+            Oven = OvenModel,
+        },
+        Tables = tables,
+        Actions = Actions,
+        Near = near,
+        MyRoot = myRoot,
     }
+
+    getgenv().RT3 = toolkit
+
+    return toolkit
 end
-local function scoreCandidate(info)
-    local mode = AA.TargetSort or "Hybrid"
-    if mode == "Distance" then
-        return info.distance
-    elseif mode == "Health" then
-        local hum = info.humanoid
-        if hum then return hum.Health end
-        return math.huge
-    elseif mode == "Angle" then
-        return info.pixelDist
-    else
-        local w = math.clamp(AA.DistanceWeight or 0, 0, 0.25)
-        return info.pixelDist + info.distance * w
+
+local AutoFarmConfig = {
+    TycoonPath = "Tycoons/Tycoon",
+    SurfacePath = "Tycoons/Tycoon/Items/Surface",
+    OrderCounterPath = "Tycoons/Tycoon/Items/Surface/K16",
+    KitchenPath = "Tycoons/Tycoon/Items/Surface/K15",
+    OvenPath = "Tycoons/Tycoon/Items/Surface/K28",
+    Tables = {
+        {
+            Name = "T10",
+            ModelPath = "Tycoons/Tycoon/Items/Surface/T10",
+            GroupIds = {"1", "2"},
+            SeatIds = {"1", "2"},
+            OrderSlipIds = {"0", "1"},
+            CookingSteps = {
+                {"KitchenInteract"},
+                {"Delay", 0.35},
+                {"KitchenComplete"},
+                {"OvenInteract"},
+                {"Delay", 0.4},
+                {"OvenComplete", false},
+                {"KitchenInteract"},
+                {"Delay", 0.35},
+                {"KitchenComplete"},
+            },
+        },
+    },
+    Delays = {
+        BetweenActions = 0.3,
+        BetweenOrders = 0.25,
+        BetweenSlips = 0.35,
+        BetweenServes = 0.45,
+        BetweenGroups = 0.6,
+        AfterCleanup = 0.5,
+        CyclePause = 1.5,
+        WaitNear = 0.25,
+    },
+    ProximityRange = 24,
+}
+
+local function deepCopyTables(configTables, toolkit)
+    local copies = {}
+    for _, tbl in ipairs(configTables) do
+        local model = toolkit.Tables[tbl.Name]
+        table.insert(copies, {
+            Name = tbl.Name,
+            Model = model,
+            GroupIds = tbl.GroupIds,
+            SeatIds = tbl.SeatIds,
+            OrderSlipIds = tbl.OrderSlipIds,
+            CookingSteps = tbl.CookingSteps,
+        })
     end
+    return copies
 end
-local function getTarget()
-    local my=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"); if not my then return nil end
-    local cx,cy=Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2; local best,bScore
-    for _,pl in ipairs(Players:GetPlayers()) do
-        local info = buildCandidate(pl, my, cx, cy)
-        if info then
-            local sc = scoreCandidate(info)
-            if not bScore or sc < bScore then
-                best,bScore = info,sc
-            end
+
+AutoFarm.Config = AutoFarmConfig
+AutoFarm.RuntimeToken = 0
+AutoFarm.Running = false
+AutoFarm.Toolkit = nil
+
+function AutoFarm:IsActive(token)
+    return self.Enabled and self.RuntimeToken == token
+end
+
+function AutoFarm:ResetToolkit()
+    self.Toolkit = nil
+end
+
+function AutoFarm:ensureToolkit()
+    if self.Toolkit then return self.Toolkit end
+    setAutoFarmStatus("Setter opp RT3-toolkit…")
+    local toolkit = buildRT3Toolkit(self.Config)
+    self.Toolkit = toolkit
+    return toolkit
+end
+
+function AutoFarm:waitForActive(token, duration)
+    duration = duration or self.Config.Delays.BetweenActions
+    local elapsed = 0
+    while elapsed < duration do
+        if not self:IsActive(token) then return false end
+        local step = math.min(0.1, duration - elapsed)
+        elapsed += step
+        task.wait(step)
+    end
+    return self:IsActive(token)
+end
+
+function AutoFarm:ensureProximity(token, toolkit, model, label)
+    if not model then
+        setAutoFarmStatus("Fant ikke modell for " .. (label or "ukjent") .. ".", T.Warn)
+        return "missing"
+    end
+    if not self:IsActive(token) then return false end
+    while self:IsActive(token) and not toolkit.Near(toolkit.MyRoot(), model, self.Config.ProximityRange) do
+        setAutoFarmStatus("Venter til du står nær " .. (label or model.Name) .. "…", T.Warn)
+        if not self:waitForActive(token, self.Config.Delays.WaitNear) then
+            return false
         end
     end
-    return best
+    return self:IsActive(token)
 end
 
-local stickyTarget, stickyTimer = nil, 0
-local rng = Random.new()
-local lastTargetPart, reactionTimer = nil, 0
-local function validateTarget(info)
-    return info and info.part and info.part:IsDescendantOf(workspace)
-end
-local function refreshTarget(info)
-    if not validateTarget(info) then return nil end
-    local player = info.player
-    if not player then return nil end
-    local char = player.Character
-    if not char then return nil end
-    info.character = char
-    info.part = info.part and info.part.Parent and info.part or aimPart(char)
-    if not info.part then return nil end
-    info.hrp = char:FindFirstChild("HumanoidRootPart")
-    if not info.hrp then return nil end
-    info.humanoid = char:FindFirstChildOfClass("Humanoid")
-    local my = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not my then return nil end
-    local maxDist = math.max(0, AA.MaxDistance or 0)
-    local minDist = math.clamp(AA.MinDistance or 0, 0, maxDist)
-    info.distance = (info.hrp.Position - my.Position).Magnitude
-    if info.distance > maxDist or info.distance < minDist then return nil end
-    local sp,on = Camera:WorldToViewportPoint(info.part.Position)
-    info.screen = Vector2.new(sp.X, sp.Y)
-    local cx,cy = Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2
-    local dx,dy = sp.X-cx, sp.Y-cy
-    info.pixelDist = (dx*dx+dy*dy)^0.5
-    if AA.WallCheck and not hasLOS(info.part, char) then return nil end
-    info.onScreen = on
-    info.velocity = (info.hrp.AssemblyLinearVelocity or info.part.AssemblyLinearVelocity or Vector3.zero)
-    return info
-end
-
--- Main render
-RunService.RenderStepped:Connect(function(dt)
-    local fovRadius = math.max(0, AA.FOVRadiusPx or 0)
-    FOV.Visible = (AA.Enabled and AA.ShowFOV)
-    FOV.Size    = UDim2.fromOffset(fovRadius*2, fovRadius*2)
-
-    local aiming = AA.Enabled and (not AA.RequireRMB or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2))
-    if aiming then
-        local candidate = getTarget()
-        if AA.StickyAim then
-            if candidate then
-                stickyTarget = candidate
-                stickyTimer = AA.StickTime
-            else
-                stickyTimer = math.max(0, stickyTimer - dt)
-                if stickyTimer <= 0 then
-                    stickyTarget = nil
-                end
+function AutoFarm:runCooking(token, actions, steps)
+    for _, step in ipairs(steps or {}) do
+        if not self:IsActive(token) then return false end
+        local action = step[1]
+        if action == "Delay" then
+            if not self:waitForActive(token, step[2] or self.Config.Delays.BetweenActions) then
+                return false
             end
         else
-            stickyTarget = nil
-            stickyTimer = 0
-        end
-
-        if stickyTarget then
-            stickyTarget = refreshTarget(stickyTarget)
-            if not stickyTarget then
-                stickyTimer = 0
+            local fn = actions[action]
+            if fn then
+                fn(step[2])
+            end
+            if not self:waitForActive(token, self.Config.Delays.BetweenActions) then
+                return false
             end
         end
+    end
+    return self:IsActive(token)
+end
 
-        local targetInfo = stickyTarget or candidate
-        if targetInfo and not validateTarget(targetInfo) then
-            targetInfo = nil
-            if stickyTarget and not validateTarget(stickyTarget) then
-                stickyTarget = nil
-                stickyTimer = 0
-            end
+function AutoFarm:runGroupPipeline(token, toolkit, tableProfile)
+    local actions = toolkit.Actions
+    local delays = self.Config.Delays
+    local tableModel = tableProfile.Model
+
+    for _, groupId in ipairs(tableProfile.GroupIds or {}) do
+        if not self:IsActive(token) then return false end
+        setAutoFarmStatus("Plasserer gruppe " .. groupId .. " ved " .. tableProfile.Name .. "…")
+        actions.SendToTable(groupId, tableModel)
+        if not self:waitForActive(token, delays.BetweenActions) then return false end
+
+        setAutoFarmStatus("Tar ordre for gruppe " .. groupId .. "…")
+        for _, seatId in ipairs(tableProfile.SeatIds or {}) do
+            if not self:IsActive(token) then return false end
+            actions.TakeOrder(groupId, seatId)
+            if not self:waitForActive(token, delays.BetweenOrders) then return false end
         end
 
-        if targetInfo then
-            if targetInfo.part ~= lastTargetPart then
-                lastTargetPart = targetInfo.part
-                local delay = math.max(0, AA.ReactionDelay or 0)
-                local jitter = math.max(0, AA.ReactionJitter or 0)
-                if jitter > 0 then
-                    delay = delay + rng:NextNumber(0, jitter)
+        setAutoFarmStatus("Henter lapper for " .. tableProfile.Name .. "…")
+        for _, slipId in ipairs(tableProfile.OrderSlipIds or {}) do
+            if not self:IsActive(token) then return false end
+            actions.PullOrderSlip(slipId)
+            if not self:waitForActive(token, delays.BetweenSlips) then return false end
+        end
+
+        setAutoFarmStatus("Tilbereder retter for " .. tableProfile.Name .. "…")
+        if not self:runCooking(token, actions, tableProfile.CookingSteps) then
+            return false
+        end
+
+        setAutoFarmStatus("Serverer gruppe " .. groupId .. "…")
+        for _, seatId in ipairs(tableProfile.SeatIds) do
+            if not self:IsActive(token) then return false end
+            actions.GrabFoodAtTable(tableModel)
+            if not self:waitForActive(token, delays.BetweenActions) then return false end
+            actions.Serve(groupId, seatId, tableModel)
+            if not self:waitForActive(token, delays.BetweenServes) then return false end
+        end
+
+        setAutoFarmStatus("Tar betaling på " .. tableProfile.Name .. "…")
+        actions.CollectBill(tableModel)
+        if not self:waitForActive(token, delays.BetweenActions) then return false end
+
+        setAutoFarmStatus("Rydder " .. tableProfile.Name .. "…")
+        actions.CollectDishes(tableModel)
+        if not self:waitForActive(token, delays.AfterCleanup) then return false end
+
+        if not self:waitForActive(token, delays.BetweenGroups) then return false end
+    end
+
+    return self:IsActive(token)
+end
+
+function AutoFarm:runLoop(token)
+    local toolkit
+    local tableProfiles
+    while self:IsActive(token) do
+        if not self.Toolkit then
+            toolkit = self:ensureToolkit()
+            tableProfiles = deepCopyTables(self.Config.Tables, toolkit)
+        elseif toolkit ~= self.Toolkit then
+            toolkit = self.Toolkit
+            tableProfiles = deepCopyTables(self.Config.Tables, toolkit)
+        end
+        if not toolkit then
+            setAutoFarmStatus("Toolkit mangler — stoppet.", T.Warn)
+            break
+        end
+        for _, profile in ipairs(tableProfiles or {}) do
+            if not self:IsActive(token) then break end
+            local proximity = self:ensureProximity(token, toolkit, profile.Model, profile.Name)
+            local skipProfile = false
+            if proximity == "missing" then
+                skipProfile = true
+                if not self:waitForActive(token, self.Config.Delays.CyclePause) then
+                    break
                 end
-                reactionTimer = delay
+            elseif not proximity then
+                break
             end
+            if not skipProfile then
+                if not self:IsActive(token) then break end
+                local ok = self:runGroupPipeline(token, toolkit, profile)
+                if not ok then break end
+            end
+        end
+        if not self:IsActive(token) then break end
+        setAutoFarmStatus("Syklus ferdig — venter…")
+        if not self:waitForActive(token, self.Config.Delays.CyclePause) then
+            break
+        end
+    end
+end
 
-            if reactionTimer > 0 then
-                reactionTimer = math.max(0, reactionTimer - dt)
-            else
-                local pos = Camera.CFrame.Position
-                local targetPos = targetInfo.part.Position + Vector3.new(0, AA.VerticalOffset or 0, 0)
-                if AA.Prediction > 0 then
-                    targetPos = targetPos + targetInfo.velocity * math.clamp(AA.Prediction, 0, 1.5)
-                end
-                local des = CFrame.lookAt(pos, targetPos)
-                local alpha = math.clamp(AA.Strength + dt*0.5, 0, 1)
-                if AA.AdaptiveSmoothing then
-                    local normalized = 1 - math.clamp((targetInfo.distance or 0) / math.max(AA.MaxDistance, 1), 0, 1)
-                    alpha = math.clamp(alpha + normalized * AA.CloseRangeBoost, 0, 1)
-                end
-
-                local deadzone = math.max(0, AA.Deadzone or 0)
-                if deadzone > 0 then
-                    local closeness = (targetInfo.pixelDist - deadzone) / math.max(deadzone, 1)
-                    if closeness > 0 then
-                        local scale = math.clamp(closeness, 0.05, 1)
-                        Camera.CFrame = Camera.CFrame:Lerp(des, math.clamp(alpha * scale, 0, 1))
+function AutoFarm:Start()
+    if self.Running then return end
+    self.Enabled = true
+    self.RuntimeToken += 1
+    local token = self.RuntimeToken
+    self.Running = true
+    task.spawn(function()
+        local hadError = false
+        local ok, err = pcall(function()
+            setAutoFarmStatus("Initialiserer…")
+            self:runLoop(token)
+        end)
+        if not ok then
+            hadError = true
+            setAutoFarmStatus("Feil: " .. trim(err), T.Warn)
+        end
+        if self.RuntimeToken == token then
+            self.Enabled = false
+        end
+        self.Running = false
+        if not self.Enabled then
+            if hadError then
+                task.delay(2.5, function()
+                    if not self.Enabled and not self.Running then
+                        setAutoFarmStatus("Idle")
                     end
-                else
-                    Camera.CFrame = Camera.CFrame:Lerp(des, alpha)
-                end
+                end)
+            else
+                setAutoFarmStatus("Idle")
             end
-        else
-            lastTargetPart = nil
-            reactionTimer = 0
         end
-    else
-        lastTargetPart = nil
-        reactionTimer = 0
-    end
-end)
+    end)
+end
 
--- ESP (Highlight)
-local function hl(model)
-    local h = model:FindFirstChild("_HL_")
-    if not h then
-        h = Instance.new("Highlight")
-        h.Name = "_HL_"
-        h.DepthMode = ESP.ThroughWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-        h.FillTransparency = ESP.FillTransparency
-        h.OutlineTransparency = ESP.OutlineTransparency
-        h.Parent = model
+function AutoFarm:Stop()
+    if not self.Enabled and not self.Running then
+        setAutoFarmStatus("Idle")
+        return
     end
-    -- make sure it adorns the whole character even if parent/rig is unusual
-    h.Adornee = model
-    return h
+    self.Enabled = false
+    self.RuntimeToken += 1
+    setAutoFarmStatus("Stopper…")
+    task.spawn(function()
+        while self.Running do
+            task.wait(0.1)
+        end
+        setAutoFarmStatus("Idle")
+    end)
 end
-local function isEnemyESP(p) if not LocalPlayer.Team or not p.Team then return nil end return LocalPlayer.Team~=p.Team end
-local function distTo(c) local hrp=c and c:FindFirstChild("HumanoidRootPart"); local my=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"); if hrp and my then return (hrp.Position-my.Position).Magnitude end return math.huge end
-local function tintESPColor(color)
-    local h,s,v = Color3.toHSV(color)
-    local intensity = math.clamp(ESP.ColorIntensity or 1, 0, 2)
-    v = math.clamp(v * intensity, 0, 1)
-    local satScale = math.clamp(0.55 + 0.45 * intensity, 0, 1.5)
-    s = math.clamp(s * satScale, 0, 1)
-    return Color3.fromHSV(h, s, v)
-end
-local function espTick(p)
-    if p==LocalPlayer then return end
-    local c=p.Character; if not c then return end
-    local h=hl(c); local show=ESP.Enabled
-    if show and ESP.EnemiesOnly then local e=isEnemyESP(p); show=(e==true) end
-    if show and ESP.UseDistance then show=distTo(c)<=ESP.MaxDistance end
-    h.Enabled=show; if not show then return end
-    h.DepthMode = ESP.ThroughWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-    h.FillTransparency = math.clamp(ESP.FillTransparency, 0, 1)
-    h.OutlineTransparency = math.clamp(ESP.OutlineTransparency, 0, 1)
-    local e=isEnemyESP(p)
-    if e==true then
-        local col = tintESPColor(ESP.EnemyColor)
-        h.FillColor=col; h.OutlineColor=col
-    elseif e==false then
-        local col = tintESPColor(ESP.FriendColor)
-        h.FillColor=col; h.OutlineColor=col
-    else
-        local col = tintESPColor(ESP.NeutralColor)
-        h.FillColor=col; h.OutlineColor=col
-    end
-end
-RunService.RenderStepped:Connect(function() for _,pl in ipairs(Players:GetPlayers()) do espTick(pl) end end)
-Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(function() task.wait(0.2); espTick(p) end) end)
 
 --==================== PAGES & CONTROLS ====================--
-local AimbotP = newPage("Aimbot")
-local ESPP    = newPage("ESP")
-local VisualP = newPage("Visuals")
-local MiscP   = newPage("Misc")
-local ConfP   = newPage("Config")
+local AutoFarmP = newPage("Autofarm")
+local UiP      = newPage("UI")
+local InfoP    = newPage("Info")
 
-local ESPColorPresets = {
-    {label = "Crimson Pulse", value = Color3.fromRGB(255, 70, 70)},
-    {label = "Solar Gold", value = Color3.fromRGB(255, 255, 0)},
-    {label = "Toxic Lime", value = Color3.fromRGB(0, 255, 140)},
-    {label = "Electric Azure", value = Color3.fromRGB(90, 190, 255)},
-    {label = "Aurora Cyan", value = Color3.fromRGB(70, 255, 255)},
-    {label = "Royal Violet", value = Color3.fromRGB(180, 110, 255)},
-    {label = "Sunburst", value = Color3.fromRGB(255, 170, 60)},
-    {label = "Frostbite", value = Color3.fromRGB(210, 235, 255)},
-}
+tabButton("Autofarm", AutoFarmP)
+tabButton("UI", UiP)
+tabButton("Info", InfoP)
+AutoFarmP.Visible = true
 
--- create tabs (avoid firing signals programmatically)
-tabButton("Aimbot", AimbotP)
-tabButton("ESP", ESPP)
-tabButton("Visuals", VisualP)
-tabButton("Misc", MiscP)
-tabButton("Config", ConfP)
--- make Aimbot page visible by default
-AimbotP.Visible = true
+-- Autofarm overview
+mkToggle(AutoFarmP, "Enable Autofarm", AutoFarm.Enabled, function(v)
+    if v then
+        AutoFarm:Start()
+    else
+        AutoFarm:Stop()
+    end
+end, "Starter/stopper for den komplette Restaurant Tycoon 3-autofarmen.")
 
--- Aimbot block
-mkToggle(AimbotP,"Enable Aimbot", AA.Enabled, function(v) AA.Enabled=v end, "Turns the aimbot feature on or off.")
-mkToggle(AimbotP,"Require Right Mouse (hold)", AA.RequireRMB, function(v) AA.RequireRMB=v end, "Only activates the aimbot while the right mouse button is held down.")
-mkToggle(AimbotP,"Wall Check (line of sight)", AA.WallCheck, function(v) AA.WallCheck=v end, "Skips targets that are blocked by walls or other geometry.")
-mkToggle(AimbotP,"Show FOV", AA.ShowFOV, function(v) AA.ShowFOV=v end, "Displays the aiming field-of-view circle on your screen.")
-mkSlider(AimbotP,"FOV Radius", 40, 500, AA.FOVRadiusPx, function(x) AA.FOVRadiusPx=math.floor(x) end,"px", "Sets the radius of the aim assist field-of-view circle in pixels.")
-mkSlider(AimbotP,"Deadzone Padding", 0, 20, AA.Deadzone, function(x) AA.Deadzone=x end,"px", "Defines an inner deadzone where the aimbot will not move the camera.")
-mkSlider(AimbotP,"Strength (lower=stronger)", 0.05, 0.40, AA.Strength, function(x) AA.Strength=x end,nil, "Controls how strongly the camera lerps toward the target (lower means snappier).")
-mkSlider(AimbotP,"Max Distance", 50, 1000, AA.MaxDistance, function(x) AA.MaxDistance=math.floor(x) end,"studs", "Limits aiming to targets within this distance.")
-mkSlider(AimbotP,"Min Distance Gate", 0, 250, AA.MinDistance, function(x) AA.MinDistance=math.floor(x) end,"studs", "Ignores targets that are closer than this distance.")
-local targetPriority = mkCycle(AimbotP,"Target Priority", {
-    {label="Hybrid (angle+distance)", value="Hybrid"},
-    {label="Closest Angle", value="Angle"},
-    {label="Closest Distance", value="Distance"},
-    {label="Lowest Health", value="Health"},
-}, AA.TargetSort, function(val) AA.TargetSort=val end, "Chooses how potential targets are ranked before aiming.")
-local distanceWeight = mkSlider(AimbotP,"Hybrid Distance Weight", 0, 0.08, AA.DistanceWeight, function(x) AA.DistanceWeight=x end,nil, "Adjusts how much distance influences the hybrid priority mode.")
-local dynamicPartToggle
-dynamicPartToggle = mkToggle(AimbotP,"Auto Bone Selection", AA.DynamicPart, function(v) AA.DynamicPart=v end, "Automatically chooses which body part to aim at based on target movement.")
-local partCycle = mkCycle(AimbotP,"Manual Target Bone", {"Head","UpperTorso","HumanoidRootPart"}, AA.PartName, function(val) AA.PartName=val end, "Selects the specific body part to aim at when auto selection is disabled.")
-local stickyToggle = mkToggle(AimbotP,"Sticky Aim (keep last target)", AA.StickyAim, function(v)
-    AA.StickyAim=v
-    if not v then stickyTarget=nil; stickyTimer=0 end
-end, "Keeps following the most recent target for a short period even if they leave the FOV.")
-local stickyDuration = mkSlider(AimbotP,"Sticky Duration", 0.1, 1.5, AA.StickTime, function(x)
-    AA.StickTime=x
-    stickyTimer = math.min(stickyTimer, AA.StickTime)
-end,"s", "How long sticky aim should hold onto the previous target.")
-local reactionDelay = mkSlider(AimbotP,"Reaction Delay", 0, 0.35, AA.ReactionDelay, function(x) AA.ReactionDelay=x end,"s", "Adds a delay before the aimbot begins to adjust toward a target.")
-local reactionJitter = mkSlider(AimbotP,"Reaction Jitter", 0, 0.3, AA.ReactionJitter, function(x) AA.ReactionJitter=x end,"s", "Adds random variation to the reaction delay for a more human feel.")
-local adaptiveToggle = mkToggle(AimbotP,"Adaptive Smoothing Boost", AA.AdaptiveSmoothing, function(v) AA.AdaptiveSmoothing=v end, "Boosts smoothing strength as enemies move closer to you.")
-local closeBoost = mkSlider(AimbotP,"Close-range Boost", 0, 0.6, AA.CloseRangeBoost, function(x) AA.CloseRangeBoost=x end,nil, "Amount of extra smoothing applied when targets are nearby.")
-local predictionSlider = mkSlider(AimbotP,"Lead Prediction", 0, 0.75, AA.Prediction, function(x) AA.Prediction=x end,"s", "Predicts where moving targets will be after this many seconds.")
-local heightOffset = mkSlider(AimbotP,"Aim Height Offset", -2, 2, AA.VerticalOffset, function(x) AA.VerticalOffset=x end,"studs", "Shifts the aim point up or down relative to the target.")
+local statusRow, statusLabel = rowBase(AutoFarmP, "Autofarm Status", "Shows whether the automation core is running.")
+statusLabel.Text = "Autofarm Status"
 
-setInteractable(stickyDuration.Row, AA.StickyAim)
-setInteractable(closeBoost.Row, AA.AdaptiveSmoothing)
-if partCycle and partCycle.Row then setInteractable(partCycle.Row, not AA.DynamicPart) end
-if reactionJitter and reactionJitter.Row then setInteractable(reactionJitter.Row, (AA.ReactionDelay or 0) > 0) end
-if distanceWeight and distanceWeight.Row then setInteractable(distanceWeight.Row, (AA.TargetSort or "Hybrid") == "Hybrid") end
+local statusValue = Instance.new("TextLabel", statusRow)
+statusValue.BackgroundTransparency = 1
+statusValue.Position = UDim2.new(1, -160, 0.5, -14)
+statusValue.Size = UDim2.new(0, 140, 0, 28)
+statusValue.Font = Enum.Font.GothamBold
+statusValue.Text = AutoFarm.Status
+statusValue.TextColor3 = T.Neon
+statusValue.TextSize = 14
+statusValue.TextXAlignment = Enum.TextXAlignment.Right
+statusValue.TextYAlignment = Enum.TextYAlignment.Center
+
+AutoFarm.StatusLabel = statusValue
+
+local refreshButton = mkButton(AutoFarmP, "Oppdater tycoon-referanser", function()
+    AutoFarm:ResetToolkit()
+    setAutoFarmStatus("Toolkit oppdatert — bygges på nytt i neste syklus.")
+end, {buttonText = "Oppdater"}, "Rescanner tycoonen for bord/stasjoner hvis du har redesignet layouten din.")
+
 RunService.RenderStepped:Connect(function()
-    setInteractable(stickyDuration.Row, AA.StickyAim)
-    setInteractable(closeBoost.Row, AA.AdaptiveSmoothing)
-    if partCycle and partCycle.Row then setInteractable(partCycle.Row, not AA.DynamicPart) end
-    if reactionJitter and reactionJitter.Row then setInteractable(reactionJitter.Row, (AA.ReactionDelay or 0) > 0) end
-    if distanceWeight and distanceWeight.Row then setInteractable(distanceWeight.Row, (AA.TargetSort or "Hybrid") == "Hybrid") end
+    setInteractable(refreshButton.Row, not AutoFarm.Running)
 end)
 
--- ESP
-mkToggle(ESPP,"Enable ESP", ESP.Enabled, function(v) ESP.Enabled=v end, "Turns highlight ESP visuals on or off.")
-mkToggle(ESPP,"Enemies Only", ESP.EnemiesOnly, function(v) ESP.EnemiesOnly=v end, "Only shows ESP highlights on enemy players.")
-mkToggle(ESPP,"Use Distance Limit", ESP.UseDistance, function(v) ESP.UseDistance=v end, "Restricts ESP to players within the max distance slider.")
-mkSlider(ESPP,"Max Distance", 50, 2000, ESP.MaxDistance, function(x) ESP.MaxDistance=math.floor(x) end,"studs", "Sets the farthest distance that ESP highlights will appear.")
-mkToggle(ESPP,"Render Through Walls", ESP.ThroughWalls, function(v) ESP.ThroughWalls=v end, "Forces highlight outlines to show even through walls.")
-mkSlider(ESPP,"Fill Transparency", 0, 1, ESP.FillTransparency, function(x) ESP.FillTransparency=x end,nil, "Adjusts how solid the ESP highlight fill appears.")
-mkSlider(ESPP,"Outline Transparency", 0, 1, ESP.OutlineTransparency, function(x) ESP.OutlineTransparency=x end,nil, "Adjusts how visible the ESP outline is.")
-mkSlider(ESPP,"Color Intensity", 0.4, 1.6, ESP.ColorIntensity, function(x) ESP.ColorIntensity=x end,nil, "Boosts or softens highlight brightness for every player type.")
-mkCycle(ESPP, "Enemy Highlight", ESPColorPresets, ESP.EnemyColor, function(col) ESP.EnemyColor = col end, "Choose the glow color used when enemies are highlighted.")
-mkCycle(ESPP, "Friendly Highlight", ESPColorPresets, ESP.FriendColor, function(col) ESP.FriendColor = col end, "Select the highlight tint for teammates and allies.")
-mkCycle(ESPP, "Neutral Highlight", ESPColorPresets, ESP.NeutralColor, function(col) ESP.NeutralColor = col end, "Pick the tone shown for players with no team alignment.")
+-- UI helpers
+local function killMenu()
+    if Root then Root.Visible = false end
+    if Gate then Gate.Enabled = false end
+    if SuccessGui then SuccessGui.Enabled = false end
+    TweenService:Create(Blur, TweenInfo.new(0.15), {Size = 0}):Play()
+    Blur.Enabled = false
+end
 
--- Visuals
-local crossT = mkToggle(VisualP,"Crosshair", Cross.Enabled, function(v) Cross.Enabled=v; updCross() end, "Shows or hides the custom crosshair overlay.")
-mkSlider(VisualP,"Opacity", 0.1,1, Cross.Opacity, function(x) Cross.Opacity=x; updCross() end,nil, "Sets how transparent the crosshair appears.")
-mkSlider(VisualP,"Size", 4,24, Cross.Size, function(x) Cross.Size=math.floor(x); updCross() end,nil, "Controls the overall length of the crosshair lines.")
-mkSlider(VisualP,"Gap", 2,20, Cross.Gap, function(x) Cross.Gap=math.floor(x); updCross() end,nil, "Adjusts the gap between the crosshair arms and the center.")
-mkSlider(VisualP,"Thickness", 1,6, Cross.Thickness, function(x) Cross.Thickness=math.floor(x); updCross() end,nil, "Changes how thick each crosshair arm is.")
-local dotT = mkToggle(VisualP,"Center Dot", Cross.CenterDot, function(v) Cross.CenterDot=v; updCross() end, "Adds a dot to the middle of the crosshair.")
-local dotS = mkSlider(VisualP,"Dot Size", 1,6, Cross.DotSize, function(x) Cross.DotSize=math.floor(x); updCross() end,nil, "Sets the size of the center dot.")
-local dotO = mkSlider(VisualP,"Dot Opacity", 0.1,1, Cross.DotOpacity, function(x) Cross.DotOpacity=x; updCross() end,nil, "Controls the transparency of the center dot.")
-local teamColorToggle
-local rainbowToggle
-teamColorToggle = mkToggle(VisualP,"Use Team Color", Cross.UseTeamColor, function(v)
-    Cross.UseTeamColor=v
-    if v and rainbowToggle then
-        Cross.Rainbow=false
-        rainbowToggle.Set(false)
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.K then
+        Root.Visible = not Root.Visible
+    elseif input.KeyCode == Enum.KeyCode.P then
+        killMenu()
     end
-    updCross()
-end, "Applies your current team color to the crosshair.")
-rainbowToggle = mkToggle(VisualP,"Rainbow Cycle", Cross.Rainbow, function(v)
-    Cross.Rainbow=v
-    if v and teamColorToggle then
-        Cross.UseTeamColor=false
-        teamColorToggle.Set(false)
-    end
-    updCross()
-end, "Cycles crosshair colors through a rainbow gradient.")
-local rainbowSpeed = mkSlider(VisualP,"Rainbow Speed", 0.2, 3, Cross.RainbowSpeed, function(x) Cross.RainbowSpeed=x; updCross() end,nil, "Controls how quickly the rainbow effect animates.")
-local pulseToggle = mkToggle(VisualP,"Pulse Opacity", Cross.Pulse, function(v) Cross.Pulse=v; updCross() end, "Makes the crosshair fade in and out repeatedly.")
-local pulseSpeed = mkSlider(VisualP,"Pulse Speed", 0.5, 5, Cross.PulseSpeed, function(x) Cross.PulseSpeed=x; updCross() end,nil, "Sets the speed of the crosshair opacity pulse.")
-RunService.RenderStepped:Connect(function()
-    local on=Cross.CenterDot; setInteractable(dotS.Row,on); setInteractable(dotO.Row,on)
-    if rainbowSpeed then setInteractable(rainbowSpeed.Row, Cross.Rainbow) end
-    if pulseSpeed then setInteractable(pulseSpeed.Row, Cross.Pulse) end
 end)
 
--- Misc
-mkToggle(MiscP,"Press K to toggle UI", true, function() end, "Reminder that you can press K to hide or show the panel.")
-local dragToggle = mkToggle(MiscP,"Allow Dragging", true, function(v)
+mkToggle(UiP,"Press K to toggle UI", true, function() end, "Reminder that K toggles the panel visibility.")
+local dragToggle = mkToggle(UiP,"Allow Dragging", true, function(v)
     draggingEnabled = v
     if not v then dragging=false end
-end, "Enables dragging the window around the screen.")
-local centerBtn = mkButton(MiscP, "Center Panel", function()
+end, "Locks or unlocks the ability to drag the window around.")
+local centerBtn = mkButton(UiP, "Center Panel", function()
     Root.Position = UDim2.fromScale(0.5,0.5)
     dragging = false
 end, {buttonText="Center"}, "Recenters the panel on your screen.")
-local scaleSlider = mkSlider(MiscP,"UI Scale", 0.85, 1.25, PanelScale.Scale, function(x) PanelScale.Scale=x end,"x", "Changes the overall size of the menu UI.")
+local scaleSlider = mkSlider(UiP,"UI Scale", 0.85, 1.25, PanelScale.Scale, function(x) PanelScale.Scale=x end,"x", "Changes the overall size of the menu UI.")
+mkButton(UiP, "Kill Menu (remove UI)", function() killMenu() end, {danger=true, buttonText="Kill Menu"}, "Completely closes the UI until you rerun the script.")
 
-local creditCard = Instance.new("Frame", MiscP)
+-- Info / credits
+local creditCard = Instance.new("Frame", InfoP)
 creditCard.Name = "CreditsCard"
 creditCard.BackgroundColor3 = T.Card
 creditCard.Size = UDim2.new(0.5, -6, 0, 64)
@@ -1223,7 +1249,7 @@ creditTitle.BackgroundTransparency = 1
 creditTitle.Position = UDim2.new(0, 0, 0, 0)
 creditTitle.Size = UDim2.new(1, -140, 0, 22)
 creditTitle.Font = Enum.Font.GothamBold
-creditTitle.Text = "Made by ProfitCruiser"
+creditTitle.Text = "ProfitCruiser Menu Shell"
 creditTitle.TextColor3 = T.Text
 creditTitle.TextSize = 15
 creditTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -1234,7 +1260,7 @@ creditSub.BackgroundTransparency = 1
 creditSub.Position = UDim2.new(0, 0, 0, 24)
 creditSub.Size = UDim2.new(1, -140, 1, -28)
 creditSub.Font = Enum.Font.Gotham
-creditSub.Text = "Made by ProfitCruiser"
+creditSub.Text = "Restaurant Tycoon 3 autofarmen er live — juster tabellen i AutoFarm.Config om du har andre bord."
 creditSub.TextColor3 = T.Subtle
 creditSub.TextSize = 12
 creditSub.TextWrapped = true
@@ -1276,7 +1302,7 @@ discordBtn.MouseButton1Click:Connect(function()
         success = success == true
     end
     if success then
-        creditSub.Text = "Discord Link Copyed"
+        creditSub.Text = "Discord link copied"
         creditSub.TextColor3 = T.Good
     else
         creditSub.Text = "Kunne ikke kopiere automatisk — bruk lenken: " .. DISCORD_URL
@@ -1290,55 +1316,6 @@ discordBtn.MouseButton1Click:Connect(function()
         end
     end)
 end)
-
--- Kill Menu logic
-local function killMenu()
-    -- hide all UIs
-    if Root then Root.Visible = false end
-    if Gate then Gate.Enabled = false end
-    if SuccessGui then SuccessGui.Enabled = false end
-    if AA_GUI then AA_GUI.Enabled = false end
-    if CrossGui then CrossGui.Enabled = false end
-    -- remove blur
-    TweenService:Create(Blur, TweenInfo.new(0.15), {Size = 0}):Play()
-    Blur.Enabled = false
-    -- disable features so runtime loops render nothing
-    AA.Enabled=false; ESP.Enabled=false; Cross.Enabled=false; updCross()
-    stickyTarget=nil; stickyTimer=0
-    -- clean existing highlights
-    for _,pl in ipairs(Players:GetPlayers()) do
-        local ch = pl.Character
-        if ch then local h = ch:FindFirstChild("_HL_"); if h then pcall(function() h:Destroy() end) end end
-    end
-end
-
--- panic key (P) also kills the menu
-UserInputService.InputBegan:Connect(function(i)
-    if i.KeyCode==Enum.KeyCode.K then Root.Visible = not Root.Visible end
-    if i.KeyCode==Enum.KeyCode.P then killMenu() end
-end)
-
--- Button to kill menu
-mkButton(MiscP, "Kill Menu (remove UI)", function() killMenu() end, {danger=true, buttonText="Kill Menu"}, "Completely closes the UI and disables every feature until re-executed.")
-
--- Config / profiles
-local BASE="ProfitCruiser"; local PROF=BASE.."/Profiles"; local MODE="memory"; local MEM=rawget(_G,"PC_ProfileStore") or {}; _G.PC_ProfileStore=MEM
-local function ensure() if makefolder then local ok1=true if not (isfolder and isfolder(BASE)) then ok1=pcall(function() makefolder(BASE) end) end local ok2=true if not (isfolder and isfolder(PROF)) then ok2=pcall(function() makefolder(PROF) end) end return ok1 and ok2 end return false end
-if ensure() and writefile and readfile then MODE="filesystem" end
-local function deep(dst,src) for k,v in pairs(src) do if typeof(v)=="table" and typeof(dst[k])=="table" then deep(dst[k],v) else dst[k]=v end end end
-local function gather() return {AA=AA, ESP=ESP, Cross=Cross} end
-local function apply(s)
-    if not s then return end
-    deep(AA,s.AA or {})
-    deep(ESP,s.ESP or {})
-    deep(Cross,s.Cross or {})
-    updCross()
-end
-local function save(name) local ok,data=pcall(function() return HttpService:JSONEncode(gather()) end); if not ok then return false,"encode" end if MODE=="filesystem" then local p=PROF.."/"..name..".json"; local s,err=pcall(function() writefile(p,data) end); return s,(s and nil or tostring(err)) else MEM[name]=data; return true end end
-local function load(name) if MODE=="filesystem" then local p=PROF.."/"..name..".json"; if not (isfile and isfile(p)) then return false,"missing" end local ok,raw=pcall(function() return readfile(p) end); if not ok then return false,"read" end local ok2,tbl=pcall(function() return HttpService:JSONDecode(raw) end); if not ok2 then return false,"decode" end apply(tbl); return true else local raw=MEM[name]; if not raw then return false,"missing" end local ok2,tbl=pcall(function() return HttpService:JSONDecode(raw) end); if not ok2 then return false,"decode" end apply(tbl); return true end end
-
-local saveBtn = mkToggle(ConfP,"Save Default (click)", false, function(v,row) if v then local ok,err=save("Default"); (row:FindFirstChildWhichIsA("TextLabel")).Text = ok and "Saved Default ✅" or ("Save failed: "..tostring(err)); task.delay(0.4,function() (row:FindFirstChildWhichIsA("TextLabel")).Text="Save Default (click)" end) end end, "Saves your current settings into the Default profile slot.")
-local loadBtn = mkToggle(ConfP,"Load Default (click)", false, function(v,row) if v then local ok,err=load("Default"); (row:FindFirstChildWhichIsA("TextLabel")).Text = ok and "Loaded Default ✅" or ("Load failed: "..tostring(err)); task.delay(0.4,function() (row:FindFirstChildWhichIsA("TextLabel")).Text="Load Default (click)" end) end end, "Loads the Default profile back into all features.")
 
 -- Show panel when gate closes (only if allowed by flow)
 Gate:GetPropertyChangedSignal("Enabled"):Connect(function()

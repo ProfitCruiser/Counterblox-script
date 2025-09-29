@@ -150,7 +150,8 @@ local Auto = {
     Tables = {},
     TableList = {},
     SelectedTable = nil,
-    GroupId = "1",
+    GroupIds = {"1", "2"},
+    GroupLabel = "1&2",
     CookVariant = 1,
     Running = false,
     StatusChanged = nil,
@@ -414,18 +415,25 @@ local function runVariant(variant, kitchen, oven)
     return true
 end
 
-local function runTableFlow(tableModel, groupId, kitchen, oven, counter)
+local function runTableFlow(tableModel, groupIds, kitchen, oven, counter)
     if not tableModel then return end
+    groupIds = (type(groupIds) == "table" and #groupIds > 0) and groupIds or {"1"}
     local seatIds = getSeatIds(tableModel)
-    setStatus(string.format("Seating %s (G%s)", tableModel.Name, groupId))
-    doTask({ Name = "SendToTable", GroupId = groupId, FurnitureModel = tableModel })
-    safeWait(0.35)
 
-    for _, seat in ipairs(seatIds) do
+    for _, groupId in ipairs(groupIds) do
         if not Auto.Running then return end
-        setStatus(string.format("Taking order %s:%s", groupId, seat))
-        doTask({ Name = "TakeOrder", GroupId = groupId, CustomerId = seat })
-        safeWait(0.25)
+        setStatus(string.format("Seating %s (G%s)", tableModel.Name, groupId))
+        doTask({ Name = "SendToTable", GroupId = groupId, FurnitureModel = tableModel })
+        safeWait(0.35)
+    end
+
+    for _, groupId in ipairs(groupIds) do
+        for _, seat in ipairs(seatIds) do
+            if not Auto.Running then return end
+            setStatus(string.format("Taking order %s:%s", groupId, seat))
+            doTask({ Name = "TakeOrder", GroupId = groupId, CustomerId = seat })
+            safeWait(0.25)
+        end
     end
 
     setStatus("Collecting order slips")
@@ -444,19 +452,21 @@ local function runTableFlow(tableModel, groupId, kitchen, oven, counter)
         safeWait(0.25)
     end
 
-    for _, seat in ipairs(seatIds) do
-        if not Auto.Running then return end
-        setStatus(string.format("Serving %s:%s", groupId, seat))
-        grabFood(tableModel)
-        safeWait(0.12)
-        doTask({
-            Name = "Serve",
-            GroupId = groupId,
-            CustomerId = seat,
-            FurnitureModel = tableModel,
-            FoodModel = foodModelFor(tableModel)
-        })
-        safeWait(0.2)
+    for _, groupId in ipairs(groupIds) do
+        for _, seat in ipairs(seatIds) do
+            if not Auto.Running then return end
+            setStatus(string.format("Serving %s:%s", groupId, seat))
+            grabFood(tableModel)
+            safeWait(0.12)
+            doTask({
+                Name = "Serve",
+                GroupId = groupId,
+                CustomerId = seat,
+                FurnitureModel = tableModel,
+                FoodModel = foodModelFor(tableModel)
+            })
+            safeWait(0.2)
+        end
     end
 
     setStatus("Collecting bill")
@@ -528,11 +538,26 @@ local function startAuto()
     )) or Auto.SelectedTable or Auto.Surface
 
     Auto.Running = true
-    setStatus("Running")
+    local groups = {}
+    if type(Auto.GroupIds) == "table" and #Auto.GroupIds > 0 then
+        for _, gid in ipairs(Auto.GroupIds) do
+            groups[#groups + 1] = tostring(gid)
+        end
+    elseif Auto.GroupLabel then
+        groups[1] = tostring(Auto.GroupLabel)
+    else
+        groups[1] = "1"
+    end
+
+    local statusLabel = "Running"
+    if Auto.SelectedTable then
+        statusLabel = string.format("Running %s (G%s)", Auto.SelectedTable.Name, table.concat(groups, ","))
+    end
+    setStatus(statusLabel)
 
     AutoThread = task.spawn(function()
         while Auto.Running do
-            runTableFlow(Auto.SelectedTable, Auto.GroupId, kitchen, oven, counter)
+            runTableFlow(Auto.SelectedTable, groups, kitchen, oven, counter)
             safeWait(0.5)
         end
         setStatus("Stopped")
@@ -760,6 +785,7 @@ local function openPanel()
     Blur.Enabled = false
     Blur.Size = 0
     RootGui.Enabled = true
+    ensureAutoSync()
 end
 
 local function setInputFeedback(state)
@@ -1057,6 +1083,8 @@ local function makeCycler(parent, options, default)
     }
 end
 
+local AutoStatus
+
 makeSection(AutofarmTab, "RT3 Autofarm")
 
 local TycoonRow, TycoonLabel = makeRow(AutofarmTab, "Tycoon status")
@@ -1089,13 +1117,50 @@ TableCycler.OnChanged(function(name)
             break
         end
     end
+    if AutoStatus and Auto.SelectedTable and not Auto.Running then
+        AutoStatus.TextColor3 = Theme.Text
+        AutoStatus.Text = string.format(
+            "Status: Klar (%s — G%s)",
+            Auto.SelectedTable.Name,
+            table.concat(Auto.GroupIds or {"1"}, ",")
+        )
+    end
 end)
 
 local GroupRow, GroupLabel = makeRow(AutofarmTab, "GroupId")
-local GroupCycler = makeCycler(GroupRow, {"1", "2", "3", "4"})
-GroupCycler.Set("1")
+local function parseGroupSelection(value)
+    local parsed = {}
+    local text = tostring(value or "")
+    if text:find("&") then
+        for id in text:gmatch("%d+") do
+            parsed[#parsed + 1] = id
+        end
+    elseif text ~= "" and text ~= "-" then
+        parsed[1] = text
+    end
+    if #parsed == 0 then
+        parsed[1] = "1"
+    end
+    return parsed
+end
+
+local GroupCycler = makeCycler(GroupRow, {"1&2", "1", "2", "3", "4"}, "1&2")
+local function updateGroupSelection(value)
+    Auto.GroupLabel = value
+    Auto.GroupIds = parseGroupSelection(value)
+    if AutoStatus and Auto.SelectedTable and not Auto.Running then
+        AutoStatus.TextColor3 = Theme.Text
+        AutoStatus.Text = string.format(
+            "Status: Klar (%s — G%s)",
+            Auto.SelectedTable.Name,
+            table.concat(Auto.GroupIds or {"1"}, ",")
+        )
+    end
+end
+
+updateGroupSelection(GroupCycler.Get())
 GroupCycler.OnChanged(function(value)
-    Auto.GroupId = value
+    updateGroupSelection(value)
 end)
 
 local CookRow, CookLabel = makeRow(AutofarmTab, "Oppskrift")
@@ -1121,7 +1186,7 @@ StopBtn.TextColor3 = Theme.Text
 local RefreshBtn = makeButton(ButtonRow2, "Refresh")
 RefreshBtn.BackgroundColor3 = Theme.Ink
 
-local AutoStatus = Instance.new("TextLabel", AutofarmTab)
+AutoStatus = Instance.new("TextLabel", AutofarmTab)
 AutoStatus.BackgroundTransparency = 1
 AutoStatus.Size = UDim2.new(1, 0, 0, 24)
 AutoStatus.Font = Enum.Font.Gotham
@@ -1136,24 +1201,78 @@ Auto.StatusChanged = function(text)
 end
 
 local function syncTycoon()
-    if refreshTycoon() then
+    local ok = refreshTycoon()
+    if ok then
         TycoonLabel.Text = Auto.Tycoon and ("Funnet: " .. Auto.Tycoon.Name) or "Ikke oppdaget"
         TycoonLabel.TextColor3 = Theme.Good
         TableCycler.SetOptions(Auto.TableList)
         if Auto.SelectedTable then
             TableCycler.Set(Auto.SelectedTable.Name)
+        elseif Auto.Tables[1] then
+            Auto.SelectedTable = Auto.Tables[1]
+            TableCycler.Set(Auto.SelectedTable.Name)
         end
+        if Auto.SelectedTable then
+            AutoStatus.TextColor3 = Theme.Text
+            local summary = Auto.GroupIds or {"1"}
+            if type(summary) ~= "table" then
+                summary = parseGroupSelection(summary)
+            end
+            AutoStatus.Text = string.format(
+                "Status: Klar (%s — G%s)",
+                Auto.SelectedTable.Name,
+                table.concat(summary, ",")
+            )
+        else
+            AutoStatus.TextColor3 = Theme.Warn
+            AutoStatus.Text = "Status: Ingen bord funnet"
+        end
+        return true
     else
         TycoonLabel.Text = "Fant ikke tycoonen din"
         TycoonLabel.TextColor3 = Theme.Warn
         TableCycler.SetOptions({"-"})
+        AutoStatus.TextColor3 = Theme.Warn
+        AutoStatus.Text = "Status: Tycoon mangler"
+        return false
+    end
+end
+
+local autoSyncActive = false
+local tycoonListenerCreated = false
+local function ensureAutoSync()
+    if autoSyncActive then return end
+    autoSyncActive = true
+    task.spawn(function()
+        local attempts = 0
+        while attempts < 30 do
+            attempts += 1
+            if syncTycoon() and Auto.SelectedTable then
+                break
+            end
+            task.wait(1)
+        end
+        autoSyncActive = false
+    end)
+
+    if not tycoonListenerCreated then
+        tycoonListenerCreated = true
+        task.spawn(function()
+            local tycoons = workspace:FindFirstChild("Tycoons") or workspace:WaitForChild("Tycoons", 10)
+            if tycoons then
+                tycoons.ChildAdded:Connect(function()
+                    task.delay(0.2, syncTycoon)
+                end)
+            end
+        end)
     end
 end
 
 RefreshBtn.MouseButton1Click:Connect(function()
-    syncTycoon()
-    AutoStatus.TextColor3 = Theme.Subtle
-    AutoStatus.Text = "Status: Oppdatert"
+    local ok = syncTycoon()
+    if ok then
+        AutoStatus.TextColor3 = Theme.Text
+    end
 end)
 
 StartBtn.MouseButton1Click:Connect(function()
@@ -1177,10 +1296,11 @@ StartBtn.MouseButton1Click:Connect(function()
         end
     end
 
-    Auto.GroupId = GroupCycler.Get()
+    updateGroupSelection(GroupCycler.Get())
     Auto.CookVariant = select(2, CookCycler.Get())
     AutoStatus.TextColor3 = Theme.Text
-    AutoStatus.Text = "Status: Starter"
+    local groupSummary = table.concat(Auto.GroupIds or {"1"}, ",")
+    AutoStatus.Text = string.format("Status: Starter (%s — G%s)", Auto.SelectedTable.Name, groupSummary)
     startAuto()
 end)
 
@@ -1252,5 +1372,6 @@ Contact.Text = "Discord: ProfitCruiser helper"
 
 -- Initial state
 syncTycoon()
+ensureAutoSync()
 
 print("[Aurora RT3] Menu loaded. Unlock with your key to access the autofarm shell.")

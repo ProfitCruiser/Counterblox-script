@@ -738,7 +738,7 @@ local function waitPath(root, path, timeout)
     timeout = timeout or 8
     local node = root
     local traversed = {}
-    for part in string.gmatch(path, "[^/]+") do
+    for part in string.gmatch(path or "", "[^/]+") do
         if not node then
             return nil, string.format("Mangler startnode for sti '%s'", path)
         end
@@ -752,6 +752,89 @@ local function waitPath(root, path, timeout)
         node = nextNode
     end
     return node
+end
+
+local function firstFoodChild(folder)
+    if not folder then return nil end
+    local direct = folder:FindFirstChild("Food")
+    if direct then return direct end
+    local modelChild = folder:FindFirstChildWhichIsA("Model")
+    if modelChild then return modelChild end
+    local basePartChild = folder:FindFirstChildWhichIsA("BasePart")
+    if basePartChild then return basePartChild end
+    for _, child in ipairs(folder:GetChildren()) do
+        if child:IsA("Model") or child:IsA("BasePart") then
+            return child
+        end
+    end
+end
+
+local function findTycoonModel(config, waitTimeout)
+    waitTimeout = waitTimeout or 8
+    local tycoonPath = config.TycoonPath
+    if tycoonPath and tycoonPath ~= "" then
+        local tycoon = select(1, waitPath(workspace, tycoonPath, waitTimeout))
+        if tycoon then return tycoon end
+        warn(string.format("[RT3 Toolkit] Fant ikke tycoon via '%s' – prøver å autodetektere.", tycoonPath))
+    end
+
+    local tycoonFolder = workspace:FindFirstChild("Tycoons")
+    if not tycoonFolder then
+        return nil, "Fant ikke 'Tycoons' i workspace"
+    end
+
+    local player = Players.LocalPlayer
+    local playerName = player and player.Name and player.Name:lower()
+
+    local function matchesOwner(model)
+        if not model or not model:IsA("Model") then return false end
+        if playerName and string.find(model.Name:lower(), playerName, 1, true) then
+            return true
+        end
+
+        local ownerAttr = model:GetAttribute("Owner")
+        if ownerAttr then
+            if typeof(ownerAttr) == "Instance" and ownerAttr == player then
+                return true
+            end
+            if typeof(ownerAttr) == "string" and playerName and ownerAttr:lower() == playerName then
+                return true
+            end
+        end
+
+        local ownerValue = model:FindFirstChild("Owner")
+        if ownerValue then
+            local ok, value = pcall(function() return ownerValue.Value end)
+            if ok and value then
+                if value == player then return true end
+                if typeof(value) == "string" and playerName and value:lower() == playerName then
+                    return true
+                end
+                if typeof(value) == "Instance" and value:IsA("Player") and value == player then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local fallback
+    for _, child in ipairs(tycoonFolder:GetChildren()) do
+        if child:IsA("Model") then
+            if not fallback and child:FindFirstChild("Items") then
+                fallback = child
+            end
+            if matchesOwner(child) then
+                return child
+            end
+        end
+    end
+
+    if fallback then
+        return fallback
+    end
+
+    return nil, "Fant ikke spillerens tycoon"
 end
 
 local function buildRT3Toolkit(config)
@@ -774,26 +857,88 @@ local function buildRT3Toolkit(config)
     local GrabFood, err = fetch(ReplicatedStorage, "Events/Restaurant/GrabFood", "GrabFood-remote")
     if not GrabFood then return nil, err end
 
-    local Tycoon, err = fetch(workspace, config.TycoonPath, "Tycoon-modellen")
+    local Tycoon, err = findTycoonModel(config, waitTimeout)
     if not Tycoon then return nil, err end
-    local OrderCounterModel, err = fetch(workspace, config.OrderCounterPath, "OrderCounter-modellen")
+
+    local function fetchTycoon(path, label)
+        return fetch(Tycoon, path, label)
+    end
+
+    local OrderCounterModel, err = fetchTycoon(config.OrderCounterPath, "OrderCounter-modellen")
     if not OrderCounterModel then return nil, err end
-    local KitchenModel, err = fetch(workspace, config.KitchenPath, "Kitchen-modellen")
+    local KitchenModel, err = fetchTycoon(config.KitchenPath, "Kitchen-modellen")
     if not KitchenModel then return nil, err end
-    local OvenModel, err = fetch(workspace, config.OvenPath, "Oven-modellen")
+    local OvenModel, err = fetchTycoon(config.OvenPath, "Oven-modellen")
     if not OvenModel then return nil, err end
 
-    local tables = {}
+    local globalFoodFolder
+    if config.GlobalFoodFolderPath and config.GlobalFoodFolderPath ~= "" then
+        globalFoodFolder = select(1, waitPath(Tycoon, config.GlobalFoodFolderPath, waitTimeout))
+    end
+    if not globalFoodFolder then
+        local objectsFolder = Tycoon:FindFirstChild("Objects")
+        if objectsFolder then
+            globalFoodFolder = objectsFolder:FindFirstChild("Food")
+        end
+    end
+
+    local tableEntries = {}
+    local tableModels = {}
     for _, tbl in ipairs(config.Tables) do
-        local model, tableErr = waitPath(workspace, tbl.ModelPath, waitTimeout)
+        local model, tableErr = waitPath(Tycoon, tbl.ModelPath, waitTimeout)
         if not model then
             warn(string.format("[RT3 Toolkit] Fant ikke bord '%s': %s", tbl.Name, tableErr or "ukjent feil"))
         end
-        tables[tbl.Name] = model
+        local entry = {
+            Name = tbl.Name,
+            Model = model,
+            Config = tbl,
+        }
+        tableEntries[tbl.Name] = entry
+        tableModels[tbl.Name] = model
     end
 
-    local function getFoodModelForTable(tblModel)
-        return tblModel:WaitForChild("Trash"):WaitForChild("Food")
+    local function resolveFoodModel(entry)
+        if not entry then return nil end
+        local cfg = entry.Config or {}
+
+        if cfg.FoodModelPath and cfg.FoodModelPath ~= "" then
+            local foodModel = select(1, waitPath(Tycoon, cfg.FoodModelPath, waitTimeout))
+            if foodModel then
+                return foodModel
+            end
+        end
+
+        local tableModel = entry.Model
+        if tableModel then
+            local container
+            if cfg.FoodContainerPath and cfg.FoodContainerPath ~= "" then
+                container = select(1, waitPath(tableModel, cfg.FoodContainerPath, waitTimeout))
+            else
+                container = tableModel:FindFirstChild("Trash")
+            end
+            local candidate = firstFoodChild(container)
+            if candidate then
+                return candidate
+            end
+        end
+
+        if cfg.FoodFolderPath and cfg.FoodFolderPath ~= "" then
+            local folder = select(1, waitPath(Tycoon, cfg.FoodFolderPath, waitTimeout))
+            local candidate = firstFoodChild(folder)
+            if candidate then
+                return candidate
+            end
+        end
+
+        if globalFoodFolder then
+            local candidate = firstFoodChild(globalFoodFolder)
+            if candidate then
+                return candidate
+            end
+        end
+
+        return nil
     end
 
     local function near(a, b, maxDist)
@@ -839,6 +984,15 @@ local function buildRT3Toolkit(config)
         }
     end
 
+    local function findTableEntry(tableOrName)
+        if typeof(tableOrName) == "table" then
+            return tableOrName
+        end
+        if typeof(tableOrName) == "string" then
+            return tableEntries[tableOrName]
+        end
+    end
+
     local Actions = {}
 
     function Actions.SendToTable(groupId, tableModel)
@@ -878,17 +1032,39 @@ local function buildRT3Toolkit(config)
         CookInput:FireServer("CompleteTask", OvenModel, "Oven", didBurnFlag == true)
     end
 
-    function Actions.GrabFoodAtTable(tableModel)
-        return GrabFood:InvokeServer(getFoodModelForTable(tableModel))
+    function Actions.GrabFood(tableRef)
+        local entry = findTableEntry(tableRef)
+        if not entry then
+            warn("[RT3 Toolkit] Fant ikke borddata for GrabFood.")
+            return nil
+        end
+        local food = resolveFoodModel(entry)
+        if not food then
+            warn(string.format("[RT3 Toolkit] Fant ikke matmodell for bord '%s'", entry.Name))
+            return nil
+        end
+        local ok, errMsg = pcall(function()
+            return GrabFood:InvokeServer(food)
+        end)
+        if not ok then
+            warn(string.format("[RT3 Toolkit] GrabFood-feil for bord '%s': %s", entry.Name, errMsg))
+        end
+        return food
     end
 
-    function Actions.Serve(groupId, customerId, tableModel)
-        TaskCompleted:FireServer(table.unpack(buildTaskPayload({
+    function Actions.Serve(groupId, customerId, tableRef, foodModel)
+        local entry = findTableEntry(tableRef)
+        if not entry then
+            warn("[RT3 Toolkit] Fant ikke borddata for Serve.")
+            return
+        end
+        local payload = buildTaskPayload({
             Name = "Serve",
             GroupId = groupId,
             CustomerId = customerId,
-            FoodModel = getFoodModelForTable(tableModel),
-        })))
+            FoodModel = foodModel,
+        })
+        TaskCompleted:FireServer(table.unpack(payload))
     end
 
     function Actions.CollectBill(tableModel)
@@ -912,7 +1088,9 @@ local function buildRT3Toolkit(config)
             Kitchen = KitchenModel,
             Oven = OvenModel,
         },
-        Tables = tables,
+        Tables = tableModels,
+        TableEntries = tableEntries,
+        FoodFolder = globalFoodFolder,
         Actions = Actions,
         Near = near,
         MyRoot = myRoot,
@@ -925,17 +1103,18 @@ end
 
 local AutoFarmConfig = {
     TycoonPath = "Tycoons/Tycoon",
-    SurfacePath = "Tycoons/Tycoon/Items/Surface",
-    OrderCounterPath = "Tycoons/Tycoon/Items/Surface/K16",
-    KitchenPath = "Tycoons/Tycoon/Items/Surface/K15",
-    OvenPath = "Tycoons/Tycoon/Items/Surface/K28",
+    OrderCounterPath = "Items/Surface/K16",
+    KitchenPath = "Items/Surface/K15",
+    OvenPath = "Items/Surface/K28",
+    GlobalFoodFolderPath = "Objects/Food",
     Tables = {
         {
             Name = "T10",
-            ModelPath = "Tycoons/Tycoon/Items/Surface/T10",
+            ModelPath = "Items/Surface/T10",
             GroupIds = {"1", "2"},
             SeatIds = {"1", "2"},
             OrderSlipIds = {"0", "1"},
+            FoodFolderPath = "Objects/Food",
             CookingSteps = {
                 {"KitchenInteract"},
                 {"Delay", 0.35},
@@ -965,10 +1144,11 @@ local AutoFarmConfig = {
 local function deepCopyTables(configTables, toolkit)
     local copies = {}
     for _, tbl in ipairs(configTables) do
-        local model = toolkit.Tables[tbl.Name]
+        local entry = toolkit.TableEntries and toolkit.TableEntries[tbl.Name]
         table.insert(copies, {
             Name = tbl.Name,
-            Model = model,
+            Model = entry and entry.Model or nil,
+            Entry = entry,
             GroupIds = tbl.GroupIds,
             SeatIds = tbl.SeatIds,
             OrderSlipIds = tbl.OrderSlipIds,
@@ -1057,6 +1237,12 @@ function AutoFarm:runGroupPipeline(token, toolkit, tableProfile)
     local actions = toolkit.Actions
     local delays = self.Config.Delays
     local tableModel = tableProfile.Model
+    local tableEntry = tableProfile.Entry
+
+    if not tableEntry then
+        setAutoFarmStatus("Fant ikke borddata for " .. tableProfile.Name .. ".", T.Warn)
+        return false
+    end
 
     for _, groupId in ipairs(tableProfile.GroupIds or {}) do
         if not self:IsActive(token) then return false end
@@ -1084,11 +1270,15 @@ function AutoFarm:runGroupPipeline(token, toolkit, tableProfile)
         end
 
         setAutoFarmStatus("Serverer gruppe " .. groupId .. "…")
-        for _, seatId in ipairs(tableProfile.SeatIds) do
+        for _, seatId in ipairs(tableProfile.SeatIds or {}) do
             if not self:IsActive(token) then return false end
-            actions.GrabFoodAtTable(tableModel)
+            local foodModel = actions.GrabFood(tableEntry)
+            if not foodModel then
+                setAutoFarmStatus("Fant ikke mat for " .. tableProfile.Name .. ".", T.Warn)
+                return false
+            end
             if not self:waitForActive(token, delays.BetweenActions) then return false end
-            actions.Serve(groupId, seatId, tableModel)
+            actions.Serve(groupId, seatId, tableEntry, foodModel)
             if not self:waitForActive(token, delays.BetweenServes) then return false end
         end
 

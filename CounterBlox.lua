@@ -1,37 +1,22 @@
 --====================================================--
--- AURORA PANEL — ProfitCruiser (fixed key→panel flow)
--- Full redesign: Compact 2-col layout + sections + gating
--- Aimbot, ESP (Highlight), Crosshair, Profiles
+-- AURORA PANEL — Restaurant Tycoon 3 Autofarm Shell
+-- Cleaned menu shell that keeps the original look
+-- while exposing the new RT3 automation controls.
 --====================================================--
 
 --// Services
+local Players           = game:GetService("Players")
+local RS                = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
 local RunService        = game:GetService("RunService")
 local Lighting          = game:GetService("Lighting")
-local Players           = game:GetService("Players")
-local GuiService        = game:GetService("GuiService")
 local HttpService       = game:GetService("HttpService")
-local TextService       = game:GetService("TextService")
 
 local LocalPlayer = Players.LocalPlayer
-local Camera      = workspace.CurrentCamera
 
--- forward-declare Root so click handlers can access it before it's created
-local Root
-
-pcall(function()
-    GuiService.AutoSelectGuiEnabled = false
-    GuiService.SelectedObject = nil
-end)
-
---// Gate / links
-local KEY_CHECK_URL = "https://pastebin.com/raw/QgqAaumb"
-local GET_KEY_URL   = "https://pastebin.com/raw/QgqAaumb"
-local DISCORD_URL   = "https://discord.gg/Pgn4NMWDH8"
-
---// Theme
-local T = {
+--// Theme (kept from the original Aurora panel)
+local Theme = {
     BG      = Color3.fromRGB(10, 9, 18),
     Panel   = Color3.fromRGB(18, 16, 31),
     Card    = Color3.fromRGB(24, 21, 40),
@@ -46,1307 +31,1347 @@ local T = {
     Off     = Color3.fromRGB(100, 94, 130),
 }
 
+--// Utils ------------------------------------------------
 local function safeParent()
-    local ok, ui = pcall(function() return (gethui and gethui()) or game:GetService("CoreGui") end)
-    return (ok and ui) or LocalPlayer:WaitForChild("PlayerGui")
+    local ok, ui = pcall(function()
+        return (gethui and gethui()) or game:GetService("CoreGui")
+    end)
+    if ok and ui then return ui end
+    return LocalPlayer:WaitForChild("PlayerGui")
 end
 
---// Utils
-local function corner(o,r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,r); c.Parent=o end
-local function stroke(o,col,th,tr) local s=Instance.new("UIStroke"); s.Color=col; s.Thickness=th or 1; s.Transparency=tr or 0; s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; s.Parent=o end
-local function pad(o,p) local x=Instance.new("UIPadding"); x.PaddingTop=UDim.new(0,p); x.PaddingBottom=UDim.new(0,p); x.PaddingLeft=UDim.new(0,p); x.PaddingRight=UDim.new(0,p); x.Parent=o end
-local function trim(s) s=tostring(s or ""):gsub("\r",""):gsub("\n",""):gsub("%s+$",""):gsub("^%s+",""); return s end
-local function setInteractable(frame, on)
-    for _,v in ipairs(frame:GetDescendants()) do
-        if v:IsA("TextLabel") or v:IsA("TextButton") then
-            v.TextTransparency = on and 0 or 0.45
-            if v:IsA("TextButton") then v.AutoButtonColor = on end
-        elseif v:IsA("Frame") then
-            v.BackgroundColor3 = on and v.BackgroundColor3 or T.Ink
+local function corner(o, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius)
+    c.Parent = o
+end
+
+local function stroke(o, col, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = col
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = o
+    return s
+end
+
+local function pad(o, px)
+    local p = Instance.new("UIPadding")
+    p.PaddingTop = UDim.new(0, px)
+    p.PaddingBottom = UDim.new(0, px)
+    p.PaddingLeft = UDim.new(0, px)
+    p.PaddingRight = UDim.new(0, px)
+    p.Parent = o
+end
+
+local function trim(str)
+    str = tostring(str or "")
+    return str:gsub("%s+$", ""):gsub("^%s+", "")
+end
+
+local function tween(obj, info, props)
+    TweenService:Create(obj, info, props):Play()
+end
+
+local function makeShadow(parent)
+    local shadow = Instance.new("ImageLabel")
+    shadow.Name = "Shadow"
+    shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+    shadow.Position = UDim2.fromScale(0.5, 0.5)
+    shadow.Size = UDim2.new(1, 46, 1, 46)
+    shadow.ZIndex = -1
+    shadow.BackgroundTransparency = 1
+    shadow.Image = "rbxassetid://6014261993"
+    shadow.ImageColor3 = Color3.new(0, 0, 0)
+    shadow.ImageTransparency = 0.48
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(49, 49, 450, 450)
+    shadow.Parent = parent
+end
+
+--// Key system defaults ---------------------------------
+local DEFAULT_KEY = "FREE" -- change via getgenv().AuroraKey
+local KEY_LINK    = "https://discord.gg/Pgn4NMWDH8"
+
+local function resolveExternalKey()
+    local ok, env = pcall(function()
+        return getgenv and getgenv()
+    end)
+    if ok and type(env) == "table" and env.AuroraKey ~= nil then
+        return env.AuroraKey
+    end
+    if type(shared) == "table" and shared.AuroraKey ~= nil then
+        return shared.AuroraKey
+    end
+    if type(_G) == "table" and _G.AuroraKey ~= nil then
+        return _G.AuroraKey
+    end
+    return nil
+end
+
+local function expectedKey()
+    local key = resolveExternalKey()
+    if key == nil then
+        return DEFAULT_KEY
+    end
+    return key
+end
+
+local function gateHint()
+    local exp = expectedKey()
+    if exp == false then
+        return "Nøkkel deaktivert via AuroraKey = false"
+    elseif exp == "" then
+        return "Skriv hvilken som helst tekst for å låse opp"
+    end
+
+    local value = tostring(exp)
+    if value:lower() == tostring(DEFAULT_KEY):lower() then
+        return "Standard nøkkel: " .. value
+    end
+    return "Tilpasset nøkkel: " .. value
+end
+
+local function checkKey(input)
+    local expected = expectedKey()
+    if expected == false then
+        return true
+    elseif expected == "" then
+        return trim(input) ~= ""
+    end
+    return trim(input):lower() == tostring(expected):lower()
+end
+
+--// Automation backend ----------------------------------
+local Auto = {
+    Tycoon = nil,
+    Surface = nil,
+    Tables = {},
+    TableList = {},
+    SelectedTable = nil,
+    GroupIds = {"1", "2"},
+    GroupLabel = "1&2",
+    CookVariant = 1,
+    Running = false,
+    StatusChanged = nil,
+}
+
+local TaskCompleted = nil
+local Interacted = nil
+local CookInput = nil
+local GrabFood = nil
+
+local function waitPath(root, path)
+    local node = root
+    for part in string.gmatch(path, "[^/]+") do
+        node = node:WaitForChild(part)
+    end
+    return node
+end
+
+local function getRoot()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    return char:WaitForChild("HumanoidRootPart"), char:WaitForChild("Humanoid")
+end
+
+local function dist(a, b)
+    local ap = (a:IsA("BasePart") and a.Position) or (a.PrimaryPart and a.PrimaryPart.Position)
+    local bp = (b:IsA("BasePart") and b.Position) or (b.PrimaryPart and b.PrimaryPart.Position)
+    if not ap or not bp then
+        return 0
+    end
+    return (ap - bp).Magnitude
+end
+
+local function near(a, b, maxD)
+    maxD = maxD or 18
+    return dist(a, b) <= maxD
+end
+
+local function pcallRetry(fn, tries, delaySec)
+    tries = tries or 3
+    delaySec = delaySec or 0.25
+    local ok, res
+    for _ = 1, tries do
+        ok, res = pcall(fn)
+        if ok then
+            return true, res
+        end
+        task.wait(delaySec)
+    end
+    return false, res
+end
+
+local function getMyTycoon()
+    local tycoons = workspace:FindFirstChild("Tycoons")
+    if not tycoons then return nil end
+    for _, t in ipairs(tycoons:GetChildren()) do
+        local matchOwner = t:FindFirstChild("Owner")
+        local matchUser = t:FindFirstChild("OwnerUserId")
+        if (matchOwner and matchOwner.Value == LocalPlayer.Name)
+            or (matchUser and tostring(matchUser.Value) == tostring(LocalPlayer.UserId)) then
+            return t
         end
     end
-    frame.Active = on
+    local ok, hrp = pcall(function()
+        local root = getRoot()
+        return root
+    end)
+    local nearest, best
+    if ok and typeof(hrp) == "Instance" then
+        for _, t in ipairs(tycoons:GetChildren()) do
+            local p = t.PrimaryPart or t:FindFirstChildWhichIsA("BasePart")
+            if p then
+                local d = (p.Position - hrp.Position).Magnitude
+                if not best or d < best then
+                    best = d
+                    nearest = t
+                end
+            end
+        end
+    end
+    return nearest
 end
 
---==================== ACCESS OVERLAY ====================--
-local Blur = Instance.new("BlurEffect"); Blur.Enabled=false; Blur.Size=0; Blur.Parent=Lighting
+local function discoverTables(surface)
+    local tables = {}
+    local names = {}
+    if not surface then return tables, names end
+    for _, child in ipairs(surface:GetChildren()) do
+        local name = child.Name:lower()
+        if name:match("^t%d+") or name:find("table") then
+            tables[#tables + 1] = child
+            names[#names + 1] = child.Name
+        elseif child:FindFirstChild("Trash") and child.Trash:FindFirstChild("Food") then
+            tables[#tables + 1] = child
+            names[#names + 1] = child.Name
+        end
+    end
+    table.sort(names)
+    return tables, names
+end
 
-local Gate = Instance.new("ScreenGui")
-Gate.Name="PC_Gate"; Gate.IgnoreGuiInset=true; Gate.ResetOnSpawn=false; Gate.ZIndexBehavior=Enum.ZIndexBehavior.Global
-Gate.DisplayOrder=100; Gate.Parent=safeParent()
+local function getSeatIds(tableModel)
+    local ids = {}
+    if not tableModel then return ids end
+    local count = 0
+    for _, d in ipairs(tableModel:GetDescendants()) do
+        if d:IsA("Seat") or d.Name:lower():find("seat") then
+            count += 1
+        end
+    end
+    count = math.max(count, 2)
+    for i = 1, count do
+        ids[#ids + 1] = tostring(i)
+    end
+    return ids
+end
 
-local Dim = Instance.new("Frame", Gate)
-Dim.BackgroundColor3=Color3.new(0,0,0); Dim.BackgroundTransparency=0.35; Dim.Size=UDim2.fromScale(1,1)
+local function getOrderSlipIds()
+    local tmp = workspace:FindFirstChild("Temp")
+    local ids = {}
+    if tmp and tmp:FindFirstChild("Part") then
+        for _, ch in ipairs(tmp.Part:GetChildren()) do
+            if tonumber(ch.Name) then
+                ids[#ids + 1] = ch.Name
+            end
+        end
+    end
+    if #ids == 0 then
+        ids = {"0", "1"}
+    end
+    table.sort(ids, function(a, b)
+        return tonumber(a) < tonumber(b)
+    end)
+    return ids
+end
 
-local Card = Instance.new("Frame", Gate)
-Card.Size=UDim2.fromOffset(600, 360); Card.AnchorPoint=Vector2.new(0.5,0.5); Card.Position=UDim2.fromScale(0.5,0.5)
-Card.BackgroundColor3=T.Card; stroke(Card,T.Stroke,1,0.45); corner(Card,18); pad(Card,22)
+local function findStation(surface, hints, fallback)
+    if not surface then return fallback end
+    for _, h in ipairs(hints) do
+        local m = surface:FindFirstChild(h)
+        if m then return m end
+    end
+    for _, child in ipairs(surface:GetChildren()) do
+        local lower = child.Name:lower()
+        for _, hint in ipairs(hints) do
+            if lower:find(hint:lower()) then
+                return child
+            end
+        end
+    end
+    return fallback
+end
+
+local CookVariants = {
+    { {"Kitchen", "Interact"}, {"Kitchen", "Complete"} },
+    { {"Kitchen", "Interact"}, {"Kitchen", "Complete"}, {"Oven", "Interact"}, {"Oven", "Complete", false} },
+    { {"Kitchen", "Interact"}, {"Kitchen", "Complete"}, {"Oven", "Interact"}, {"Oven", "Complete", false}, {"Kitchen", "Interact"}, {"Kitchen", "Complete"} }
+}
+
+local function buildTask(fields)
+    local t = { Name = assert(fields.Name, "missing Name"), Tycoon = Auto.Tycoon }
+    if fields.GroupId then t.GroupId = tostring(fields.GroupId) end
+    if fields.FurnitureModel then t.FurnitureModel = fields.FurnitureModel end
+    if fields.CustomerId then t.CustomerId = tostring(fields.CustomerId) end
+    if fields.FoodModel then t.FoodModel = fields.FoodModel end
+    return { t }
+end
+
+local function buildCounterPayload(id, counter)
+    local tmp = workspace:FindFirstChild("Temp")
+    local part = tmp and tmp:FindFirstChild("Part")
+    local prompt = part and part:FindFirstChild(id)
+    return Auto.Tycoon, {
+        WorldPosition   = (part and part.Position) or Vector3.zero,
+        HoldDuration    = 0.375,
+        Part            = part or Instance.new("Part"),
+        TemporaryPart   = part or Instance.new("Part"),
+        Model           = counter,
+        InteractionType = "OrderCounter",
+        Prompt          = prompt or Instance.new("ProximityPrompt"),
+        ActionText      = "Cook",
+        Id              = tostring(id)
+    }
+end
+
+local function foodModelFor(tableModel)
+    if not tableModel then return nil end
+    local ok, res = pcall(function()
+        return tableModel.Trash.Food
+    end)
+    if ok and res then return res end
+    for _, d in ipairs(tableModel:GetDescendants()) do
+        if d.Name == "Food" then
+            return d
+        end
+    end
+    return nil
+end
+
+local function doTask(fields)
+    return pcallRetry(function()
+        TaskCompleted:FireServer(unpack(buildTask(fields)))
+    end)
+end
+
+local function doCounter(id, counter)
+    local a1, a2 = buildCounterPayload(id, counter)
+    return pcallRetry(function()
+        Interacted:FireServer(a1, a2)
+    end)
+end
+
+local function cookStep(model, kind, action, flag)
+    return pcallRetry(function()
+        if action == "Interact" then
+            CookInput:FireServer("Interact", model, kind)
+        else
+            if flag == nil then
+                CookInput:FireServer("CompleteTask", model, kind)
+            else
+                CookInput:FireServer("CompleteTask", model, kind, flag)
+            end
+        end
+    end)
+end
+
+local function grabFood(tableModel)
+    local food = foodModelFor(tableModel)
+    if not food then
+        return false, "No food model"
+    end
+    return pcallRetry(function()
+        return GrabFood:InvokeServer(food)
+    end)
+end
+
+local function safeWait(t)
+    local start = os.clock()
+    while os.clock() - start < t do
+        if not Auto.Running then return end
+        RunService.Heartbeat:Wait()
+    end
+end
+
+local function setStatus(text)
+    if Auto.StatusChanged then
+        Auto.StatusChanged(text)
+    end
+end
+
+local function runVariant(variant, kitchen, oven)
+    for _, step in ipairs(variant) do
+        if not Auto.Running then return false end
+        local kind, action, flag = step[1], step[2], step[3]
+        local model = (kind == "Kitchen" and kitchen) or (kind == "Oven" and oven) or kitchen
+        local ok = cookStep(model, kind, action, flag)
+        if not ok then
+            return false
+        end
+        safeWait(0.35)
+    end
+    return true
+end
+
+local function runTableFlow(tableModel, groupIds, kitchen, oven, counter)
+    if not tableModel then return end
+    groupIds = (type(groupIds) == "table" and #groupIds > 0) and groupIds or {"1"}
+    local seatIds = getSeatIds(tableModel)
+
+    for _, groupId in ipairs(groupIds) do
+        if not Auto.Running then return end
+        setStatus(string.format("Seating %s (G%s)", tableModel.Name, groupId))
+        doTask({ Name = "SendToTable", GroupId = groupId, FurnitureModel = tableModel })
+        safeWait(0.35)
+    end
+
+    for _, groupId in ipairs(groupIds) do
+        for _, seat in ipairs(seatIds) do
+            if not Auto.Running then return end
+            setStatus(string.format("Taking order %s:%s", groupId, seat))
+            doTask({ Name = "TakeOrder", GroupId = groupId, CustomerId = seat })
+            safeWait(0.25)
+        end
+    end
+
+    setStatus("Collecting order slips")
+    for _, id in ipairs(getOrderSlipIds()) do
+        if not Auto.Running then return end
+        doCounter(id, counter)
+        safeWait(0.2)
+    end
+
+    setStatus("Cooking")
+    local variants = { CookVariants[Auto.CookVariant], CookVariants[2], CookVariants[3] }
+    for _, variant in ipairs(variants) do
+        if variant and runVariant(variant, kitchen, oven) then
+            break
+        end
+        safeWait(0.25)
+    end
+
+    for _, groupId in ipairs(groupIds) do
+        for _, seat in ipairs(seatIds) do
+            if not Auto.Running then return end
+            setStatus(string.format("Serving %s:%s", groupId, seat))
+            grabFood(tableModel)
+            safeWait(0.12)
+            doTask({
+                Name = "Serve",
+                GroupId = groupId,
+                CustomerId = seat,
+                FurnitureModel = tableModel,
+                FoodModel = foodModelFor(tableModel)
+            })
+            safeWait(0.2)
+        end
+    end
+
+    setStatus("Collecting bill")
+    doTask({ Name = "CollectBill", FurnitureModel = tableModel })
+    safeWait(0.2)
+    doTask({ Name = "CollectDishes", FurnitureModel = tableModel })
+    safeWait(0.2)
+end
+
+local function refreshTycoon()
+    local tycoon = getMyTycoon()
+    Auto.Tycoon = tycoon
+    if not tycoon then
+        Auto.Surface = nil
+        Auto.Tables = {}
+        Auto.TableList = {}
+        return false
+    end
+
+    Auto.Surface = tycoon:FindFirstChild("Items") and tycoon.Items:FindFirstChild("Surface")
+    Auto.Tables, Auto.TableList = discoverTables(Auto.Surface)
+    if not table.find(Auto.Tables, Auto.SelectedTable) then
+        Auto.SelectedTable = Auto.Tables[1]
+    end
+    return true
+end
+
+local function ensureRemotes()
+    TaskCompleted = TaskCompleted or waitPath(RS, "Events/Restaurant/TaskCompleted")
+    Interacted = Interacted or waitPath(RS, "Events/Restaurant/Interactions/Interacted")
+    CookInput = CookInput or waitPath(RS, "Events/Cook/CookInputRequested")
+    GrabFood = GrabFood or waitPath(RS, "Events/Restaurant/GrabFood")
+end
+
+local AutoThread
+
+local function startAuto()
+    if Auto.Running then return end
+    ensureRemotes()
+    if not refreshTycoon() then
+        setStatus("Tycoon not found")
+        return
+    end
+
+    if not Auto.SelectedTable then
+        Auto.SelectedTable = Auto.Tables[1]
+    end
+
+    if not Auto.SelectedTable then
+        setStatus("No tables detected")
+        return
+    end
+
+    local kitchen = (Auto.Surface and (
+        Auto.Surface:FindFirstChild("K15")
+        or findStation(Auto.Surface, {"K15", "kitchen", "prep", "grill", "pan"})
+        or Auto.Surface:FindFirstChildWhichIsA("Model")
+    )) or Auto.SelectedTable
+
+    local oven = (Auto.Surface and (
+        Auto.Surface:FindFirstChild("K28")
+        or findStation(Auto.Surface, {"K28", "oven", "bake"})
+    )) or kitchen
+
+    local counter = (Auto.Surface and (
+        Auto.Surface:FindFirstChild("K16")
+        or findStation(Auto.Surface, {"K16", "counter", "order"})
+        or Auto.Surface
+    )) or Auto.SelectedTable or Auto.Surface
+
+    Auto.Running = true
+    local groups = {}
+    if type(Auto.GroupIds) == "table" and #Auto.GroupIds > 0 then
+        for _, gid in ipairs(Auto.GroupIds) do
+            groups[#groups + 1] = tostring(gid)
+        end
+    elseif Auto.GroupLabel then
+        groups[1] = tostring(Auto.GroupLabel)
+    else
+        groups[1] = "1"
+    end
+
+    local statusLabel = "Running"
+    if Auto.SelectedTable then
+        statusLabel = string.format("Running %s (G%s)", Auto.SelectedTable.Name, table.concat(groups, ","))
+    end
+    setStatus(statusLabel)
+
+    AutoThread = task.spawn(function()
+        while Auto.Running do
+            runTableFlow(Auto.SelectedTable, groups, kitchen, oven, counter)
+            safeWait(0.5)
+        end
+        setStatus("Stopped")
+    end)
+end
+
+local function stopAuto()
+    Auto.Running = false
+end
+
+--// UI helpers -----------------------------------------
+local RootGui = Instance.new("ScreenGui")
+RootGui.Name = "AuroraRT3"
+RootGui.DisplayOrder = 200
+RootGui.IgnoreGuiInset = true
+RootGui.ResetOnSpawn = false
+RootGui.Parent = safeParent()
+
+local Blur = Instance.new("BlurEffect")
+Blur.Size = 12
+Blur.Enabled = true
+Blur.Parent = Lighting
+
+-- Access Gate -------------------------------------------
+local GateGui = Instance.new("ScreenGui")
+GateGui.Name = "AuroraGate"
+GateGui.IgnoreGuiInset = true
+GateGui.ResetOnSpawn = false
+GateGui.DisplayOrder = 999
+GateGui.Parent = safeParent()
+
+local Dim = Instance.new("Frame")
+Dim.BackgroundColor3 = Color3.new(0, 0, 0)
+Dim.BackgroundTransparency = 0.35
+Dim.Size = UDim2.fromScale(1, 1)
+Dim.Parent = GateGui
+
+local Card = Instance.new("Frame")
+Card.Size = UDim2.fromOffset(620, 360)
+Card.AnchorPoint = Vector2.new(0.5, 0.5)
+Card.Position = UDim2.fromScale(0.5, 0.5)
+Card.BackgroundColor3 = Theme.Card
+Card.Parent = GateGui
+corner(Card, 18)
+stroke(Card, Theme.Stroke, 1, 0.35)
+pad(Card, 20)
+makeShadow(Card)
 
 local CardLayout = Instance.new("UIListLayout", Card)
 CardLayout.SortOrder = Enum.SortOrder.LayoutOrder
-CardLayout.Padding   = UDim.new(0, 12)
+CardLayout.Padding = UDim.new(0, 14)
 
 local Hero = Instance.new("Frame", Card)
-Hero.Name = "Hero"; Hero.Size = UDim2.new(1,0,0,128); Hero.LayoutOrder = 1; Hero.BackgroundColor3 = T.Accent; Hero.BackgroundTransparency = 0.7
-Hero.ZIndex = 2; Hero.ClipsDescendants = true; corner(Hero,16); stroke(Hero,T.Stroke,1,0.28)
+Hero.BackgroundColor3 = Theme.Accent
+Hero.BackgroundTransparency = 0.45
+Hero.Size = UDim2.new(1, 0, 0, 120)
+Hero.LayoutOrder = 1
+Hero.ZIndex = 2
+corner(Hero, 14)
+stroke(Hero, Theme.Stroke, 1, 0.4)
 
-local heroGradient = Instance.new("UIGradient", Hero)
-heroGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, T.Accent),
-    ColorSequenceKeypoint.new(1, T.Neon)
-})
-heroGradient.Rotation = 28
-heroGradient.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 0.22),
-    NumberSequenceKeypoint.new(1, 0.32)
-})
+local HeroPad = Instance.new("UIPadding", Hero)
+HeroPad.PaddingTop = UDim.new(0, 16)
+HeroPad.PaddingBottom = UDim.new(0, 16)
+HeroPad.PaddingLeft = UDim.new(0, 18)
+HeroPad.PaddingRight = UDim.new(0, 18)
 
-local heroPad = Instance.new("UIPadding", Hero)
-heroPad.PaddingTop = UDim.new(0, 18); heroPad.PaddingBottom = UDim.new(0, 18)
-heroPad.PaddingLeft = UDim.new(0, 20); heroPad.PaddingRight = UDim.new(0, 20)
-
-local heroLayout = Instance.new("UIListLayout", Hero)
-heroLayout.SortOrder = Enum.SortOrder.LayoutOrder; heroLayout.Padding = UDim.new(0, 8)
+local HeroLayout = Instance.new("UIListLayout", Hero)
+HeroLayout.SortOrder = Enum.SortOrder.LayoutOrder
+HeroLayout.Padding = UDim.new(0, 10)
 
 local Pill = Instance.new("TextLabel", Hero)
-Pill.BackgroundTransparency = 0.2; Pill.BackgroundColor3 = T.Ink; Pill.LayoutOrder = 1
-Pill.Size = UDim2.new(0, 150, 0, 26); Pill.Font = Enum.Font.GothamBold; Pill.TextSize = 13
-Pill.Text = "ACCESS PASS"; Pill.TextColor3 = T.Text; Pill.TextXAlignment = Enum.TextXAlignment.Center
+Pill.Size = UDim2.fromOffset(160, 26)
+Pill.BackgroundColor3 = Theme.Ink
+Pill.BackgroundTransparency = 0.2
+Pill.Text = "AURORA ACCESS"
+Pill.Font = Enum.Font.GothamBold
+Pill.TextSize = 13
+Pill.TextColor3 = Theme.Text
+Pill.TextXAlignment = Enum.TextXAlignment.Center
+Pill.LayoutOrder = 1
 Pill.ZIndex = 3
-corner(Pill, 13); stroke(Pill, T.Stroke, 1, 0.5)
+corner(Pill, 13)
+stroke(Pill, Theme.Stroke, 1, 0.5)
 
-local Title = Instance.new("TextLabel", Hero)
-Title.BackgroundTransparency=1; Title.Text="ProfitCruiser — Access Portal"; Title.Font=Enum.Font.GothamBlack; Title.TextSize=24; Title.TextColor3=T.Text
-Title.Size=UDim2.new(1,0,0,34); Title.TextXAlignment=Enum.TextXAlignment.Left; Title.LayoutOrder = 2; Title.ZIndex = 3
+local HeroTitle = Instance.new("TextLabel", Hero)
+HeroTitle.BackgroundTransparency = 1
+HeroTitle.Text = "ProfitCruiser — Restaurant Toolkit"
+HeroTitle.Font = Enum.Font.GothamBlack
+HeroTitle.TextSize = 24
+HeroTitle.TextColor3 = Theme.Text
+HeroTitle.TextXAlignment = Enum.TextXAlignment.Left
+HeroTitle.Size = UDim2.new(1, 0, 0, 38)
+HeroTitle.LayoutOrder = 2
+HeroTitle.ZIndex = 3
 
-local Hint = Instance.new("TextLabel", Hero)
-Hint.BackgroundTransparency=1; Hint.Text="Paste your private key to unlock Aurora. Grab a new key or meet the crew on Discord for instant drops."; Hint.Font=Enum.Font.Gotham
-Hint.TextSize=14; Hint.TextColor3=T.Text; Hint.TextWrapped=true; Hint.TextXAlignment=Enum.TextXAlignment.Left; Hint.TextYAlignment=Enum.TextYAlignment.Top
-Hint.Size=UDim2.new(1,0,0,44); Hint.LayoutOrder = 3; Hint.ZIndex = 3
+local HeroSub = Instance.new("TextLabel", Hero)
+HeroSub.BackgroundTransparency = 1
+HeroSub.Text = "Lås opp menyen med nøkkelen din og styr den nye RT3-autofarmen."
+HeroSub.Font = Enum.Font.Gotham
+HeroSub.TextSize = 14
+HeroSub.TextColor3 = Theme.Text
+HeroSub.TextTransparency = 0.08
+HeroSub.TextXAlignment = Enum.TextXAlignment.Left
+HeroSub.Size = UDim2.new(1, 0, 0, 26)
+HeroSub.LayoutOrder = 3
+HeroSub.ZIndex = 3
 
-local Features = Instance.new("TextLabel", Hero)
-Features.BackgroundTransparency = 1; Features.Text = "⚡ Rapid updates    🛡️ Anti-ban shielding    🎯 Elite aim assist"
-Features.Font = Enum.Font.Gotham; Features.TextSize = 13; Features.TextColor3 = T.Subtle; Features.TextXAlignment = Enum.TextXAlignment.Left
-Features.Size = UDim2.new(1,0,0,22); Features.LayoutOrder = 4; Features.ZIndex = 3
+local Field = Instance.new("Frame", Card)
+Field.BackgroundColor3 = Theme.Panel
+Field.Size = UDim2.new(1, 0, 0, 140)
+Field.LayoutOrder = 2
+corner(Field, 14)
+stroke(Field, Theme.Stroke, 1, 0.42)
+pad(Field, 16)
 
-local InputSection = Instance.new("Frame", Card)
-InputSection.BackgroundColor3 = T.Panel; InputSection.BackgroundTransparency = 0.05; InputSection.Size = UDim2.new(1,0,0,120)
-InputSection.LayoutOrder = 2; corner(InputSection,14); stroke(InputSection,T.Stroke,1,0.28)
+local FieldLayout = Instance.new("UIListLayout", Field)
+FieldLayout.SortOrder = Enum.SortOrder.LayoutOrder
+FieldLayout.Padding = UDim.new(0, 12)
 
-local inputPad = Instance.new("UIPadding", InputSection)
-inputPad.PaddingTop = UDim.new(0, 14); inputPad.PaddingBottom = UDim.new(0, 14)
-inputPad.PaddingLeft = UDim.new(0, 18); inputPad.PaddingRight = UDim.new(0, 18)
-
-local inputLayout = Instance.new("UIListLayout", InputSection)
-inputLayout.SortOrder = Enum.SortOrder.LayoutOrder; inputLayout.Padding = UDim.new(0, 8)
-
-local KeyLabel = Instance.new("TextLabel", InputSection)
-KeyLabel.BackgroundTransparency = 1; KeyLabel.Text = "Master Key"; KeyLabel.Font = Enum.Font.GothamMedium; KeyLabel.TextSize = 15
-KeyLabel.TextColor3 = T.Text; KeyLabel.TextXAlignment = Enum.TextXAlignment.Left; KeyLabel.Size = UDim2.new(1,0,0,22)
+local KeyLabel = Instance.new("TextLabel", Field)
+KeyLabel.BackgroundTransparency = 1
+KeyLabel.Text = "Skriv inn nøkkel"
+KeyLabel.Font = Enum.Font.GothamSemibold
+KeyLabel.TextSize = 16
+KeyLabel.TextColor3 = Theme.Text
+KeyLabel.TextXAlignment = Enum.TextXAlignment.Left
 KeyLabel.LayoutOrder = 1
 
-local KeyBox = Instance.new("TextBox", InputSection)
-KeyBox.Size=UDim2.new(1,0,0,40); KeyBox.Text=""; KeyBox.PlaceholderText="Paste key or drop to auto-fill…"
-KeyBox.ClearTextOnFocus=false; KeyBox.Font=Enum.Font.Gotham; KeyBox.TextSize=16; KeyBox.TextColor3=T.Text
-KeyBox.BackgroundColor3=T.Ink; stroke(KeyBox,T.Stroke,1,0.35); corner(KeyBox,12); KeyBox.LayoutOrder = 2
-
-local KeyNote = Instance.new("TextLabel", InputSection)
-KeyNote.BackgroundTransparency = 1; KeyNote.Text = "Keys rotate fast — confirm before the cycle resets. Discord pings fire instantly."
-KeyNote.Font = Enum.Font.Gotham; KeyNote.TextSize = 12; KeyNote.TextColor3 = T.Subtle; KeyNote.TextWrapped = true
-KeyNote.TextXAlignment = Enum.TextXAlignment.Left; KeyNote.TextYAlignment = Enum.TextYAlignment.Top
-KeyNote.Size = UDim2.new(1,0,0,32); KeyNote.LayoutOrder = 3
-
-local Divider = Instance.new("Frame", Card)
-Divider.BackgroundColor3 = T.Stroke; Divider.BackgroundTransparency = 0.55; Divider.Size = UDim2.new(1,0,0,1); Divider.LayoutOrder = 3
-
-local Row = Instance.new("Frame", Card)
-Row.BackgroundTransparency=1; Row.Size=UDim2.new(1,0,0,48); Row.LayoutOrder = 4
-
-local rowLayout = Instance.new("UIListLayout", Row)
-rowLayout.FillDirection = Enum.FillDirection.Horizontal; rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center; rowLayout.Padding = UDim.new(0, 14)
-
-local function btn(text, style)
-    local b=Instance.new("TextButton", Row); b.Text=text; b.Font=Enum.Font.GothamMedium; b.TextSize=15; b.TextColor3=T.Text
-    b.AutoButtonColor=false; b.Size=UDim2.new(0,172,0,42); b.LayoutOrder = style == "primary" and 3 or 1
-    local isPrimary = style == "primary"
-    local baseColor = isPrimary and T.Accent or T.Ink
-    local hoverColor = isPrimary and T.Neon or Color3.fromRGB(58, 52, 88)
-    b.BackgroundColor3=baseColor; stroke(b,T.Stroke,1,0.35); corner(b,12)
-    b.MouseEnter:Connect(function() TweenService:Create(b,TweenInfo.new(0.12),{BackgroundColor3=hoverColor}):Play() end)
-    b.MouseLeave:Connect(function() TweenService:Create(b,TweenInfo.new(0.12),{BackgroundColor3=baseColor}):Play() end)
-    return b
-end
-
-local GetKey = btn("Get Key Link")
-local Discord = btn("Join Discord")
-local Confirm = btn("Unlock Panel", "primary")
-
-local Status = Instance.new("TextLabel", Card)
-Status.BackgroundColor3 = T.Ink; Status.BackgroundTransparency = 0.6; Status.Text=""; Status.Font=Enum.Font.Gotham
-Status.TextSize=13; Status.TextColor3=T.Subtle; Status.Size=UDim2.new(1,0,0,28); Status.LayoutOrder = 5
-Status.TextXAlignment=Enum.TextXAlignment.Center; Status.TextYAlignment = Enum.TextYAlignment.Center; corner(Status,12)
-
-local function updateStatus(text, color)
-    Status.Text = text
-    Status.TextColor3 = color or T.Subtle
-end
-
-updateStatus("Paste your key to unlock ProfitCruiser.")
-
--- Success overlay in its own GUI so it survives hiding Gate
-local SuccessGui = Instance.new("ScreenGui")
-SuccessGui.Name = "PC_Success"; SuccessGui.IgnoreGuiInset = true; SuccessGui.ResetOnSpawn = false
-SuccessGui.ZIndexBehavior = Enum.ZIndexBehavior.Global; SuccessGui.DisplayOrder = 110
-SuccessGui.Parent = safeParent()
-
-local Success = Instance.new("Frame", SuccessGui)
-Success.Visible=false; Success.Size=UDim2.fromScale(1,1); Success.BackgroundTransparency=1
-local Center = Instance.new("Frame", Success)
-Center.Size=UDim2.fromOffset(420,220); Center.AnchorPoint=Vector2.new(0.5,0.5); Center.Position=UDim2.fromScale(0.5,0.5); Center.BackgroundColor3=T.Card
-corner(Center,16); stroke(Center,T.Good,2,0)
-local GG = Instance.new("TextLabel", Center)
-GG.BackgroundTransparency=1; GG.Size=UDim2.fromScale(1,1); GG.Text="ACCESS GRANTED ✨"; GG.TextColor3=T.Good; GG.Font=Enum.Font.GothamBold; GG.TextSize=28
-
--- FLAG: only allow reveal of Root after overlay finished
-local allowReveal = false
-
-local function fetchRemoteKey()
-    local ok,res=pcall(game.HttpGet,game,KEY_CHECK_URL)
-    if not ok then return nil,res end
-    local cleaned=trim(res); if #cleaned==0 then return nil,"empty" end
-    return cleaned
-end
-
-GetKey.MouseButton1Click:Connect(function()
-    if typeof(setclipboard)=="function" then
-        setclipboard(GET_KEY_URL)
-        updateStatus("Key link copied to clipboard.", T.Neon)
-    else
-        updateStatus("Key link: "..GET_KEY_URL)
-    end
-end)
-Discord.MouseButton1Click:Connect(function()
-    if typeof(setclipboard)=="function" then setclipboard(DISCORD_URL) end
-    updateStatus("Discord invite copied — we'll see you inside!", T.Neon)
-    if syn and syn.request then pcall(function() syn.request({Url=DISCORD_URL,Method="GET"}) end) end
-end)
-
--- new showGranted supports callback after hide
-local function showGranted(seconds, after)
-    Success.Visible = true
-    task.delay(seconds or 2.0, function()
-        Success.Visible = false
-        if after then pcall(after) end
-    end)
-end
-
-Confirm.MouseButton1Click:Connect(function()
-    updateStatus("Checking key…", T.Text)
-    local expected,err = fetchRemoteKey()
-    if not expected then updateStatus("Fetch failed: "..tostring(err or ""), T.Warn) return end
-
-    if trim(KeyBox.Text) == expected then
-        updateStatus("Accepted!", T.Good)
-
-        -- Immediately hide the gate UI so the key box is gone
-        Gate.Enabled = false
-
-        -- Ensure Root is hidden while we show the success overlay
-        if Root then Root.Visible = false end
-
-        -- Show blur and keep it while overlay is visible
-        Blur.Enabled = true
-        TweenService:Create(Blur, TweenInfo.new(0.2), {Size = 8}):Play()
-
-        -- Show the granted overlay for 2s, then remove blur and reveal the panel
-        showGranted(2.0, function()
-            -- animate blur out
-            TweenService:Create(Blur, TweenInfo.new(0.2), {Size = 0}):Play()
-            task.delay(0.2, function() Blur.Enabled = false end)
-
-            -- mark that reveal is allowed and show Root
-            allowReveal = true
-            if Root then Root.Visible = true end
-        end)
-
-    else
-        updateStatus("Wrong key.", T.Warn)
-    end
-end)
-
-Gate.Enabled=true
-Blur.Enabled=true; TweenService:Create(Blur,TweenInfo.new(0.2),{Size=8}):Play()
-
--- Ensure AA_GUI is disabled when gate is open
-Gate:GetPropertyChangedSignal("Enabled"):Connect(function()
-    AA_GUI.Enabled = not Gate.Enabled
-end)
-
---==================== MAIN APP ====================--
-local App = Instance.new("ScreenGui")
-App.Name="AuroraPanel"; App.IgnoreGuiInset=true; App.ResetOnSpawn=false; App.ZIndexBehavior=Enum.ZIndexBehavior.Global
-App.DisplayOrder=50; App.Parent=safeParent()
-
-Root = Instance.new("Frame", App)
-Root.Size=UDim2.fromOffset(980, 600); Root.AnchorPoint=Vector2.new(0.5,0.5); Root.Position=UDim2.fromScale(0.5,0.5)
-Root.BackgroundColor3=T.Card; corner(Root,16); stroke(Root,T.Stroke,1,0.45); pad(Root,12)
-Root.Visible=false
-
-local PanelScale = Instance.new("UIScale", Root)
-PanelScale.Scale = 1
-
-local Top = Instance.new("Frame", Root)
-Top.Size=UDim2.new(1, -16, 0, 46); Top.Position=UDim2.new(0,8,0,8); Top.BackgroundColor3=T.Panel; corner(Top,12); stroke(Top,T.Stroke,1,0.45); pad(Top,10)
-
-local TitleLbl = Instance.new("TextLabel", Top)
-TitleLbl.Size=UDim2.new(0.6,0,1,0); TitleLbl.BackgroundTransparency=1; TitleLbl.TextXAlignment=Enum.TextXAlignment.Left
-TitleLbl.Text="ProfitCruiser — Aurora Panel"; TitleLbl.Font=Enum.Font.GothamBold; TitleLbl.TextSize=18; TitleLbl.TextColor3=T.Text
-
--- drag
-local draggingEnabled = true
-local dragging,rel=false,Vector2.zero
-Top.InputBegan:Connect(function(i) if draggingEnabled and i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true; rel=Root.AbsolutePosition-UserInputService:GetMouseLocation() end end)
-UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
-RunService.RenderStepped:Connect(function()
-    if dragging then
-        local vp=Camera.ViewportSize; local m=UserInputService:GetMouseLocation()
-        local nx=math.clamp(m.X+rel.X,8,vp.X-Root.AbsoluteSize.X-8); local ny=math.clamp(m.Y+rel.Y,8,vp.Y-Root.AbsoluteSize.Y-8)
-        Root.Position=UDim2.fromOffset(nx,ny)
-    end
-end)
-
--- sidebar
-local Side = Instance.new("Frame", Root)
-Side.Size=UDim2.new(0, 210, 1, -70); Side.Position=UDim2.new(0,8,0,62)
-Side.BackgroundColor3=T.Panel; corner(Side,12); stroke(Side,T.Stroke,1,0.45); pad(Side,8)
--- ensure tab buttons stack vertically (fix: only Aimbot showing)
-local SideList = Instance.new("UIListLayout", Side)
-SideList.SortOrder = Enum.SortOrder.LayoutOrder
-SideList.Padding   = UDim.new(0,8)
-
-local Content = Instance.new("Frame", Root)
-Content.Size=UDim2.new(1, -234, 1, -70); Content.Position=UDim2.new(0, 226, 0, 62); Content.BackgroundTransparency=1
-Content.ClipsDescendants = true
-
--- two-column grid inside pages
-local function newPage(name)
-    local p = Instance.new("ScrollingFrame", Content)
-    p.Name = name
-    p.Size = UDim2.fromScale(1, 1)
-    p.Visible = false
-    p.BackgroundTransparency = 1
-    p.BorderSizePixel = 0
-    p.ClipsDescendants = true
-    p.Active = true
-    p.ScrollingEnabled = true
-    p.ScrollBarThickness = 4
-    p.ScrollBarImageColor3 = T.Subtle
-    p.ScrollBarImageTransparency = 0.15
-    p.CanvasSize = UDim2.new(0, 0, 0, 0)
-    p.ScrollingDirection = Enum.ScrollingDirection.Y
-
-    local padding = Instance.new("UIPadding", p)
-    padding.PaddingLeft = UDim.new(0, 4)
-    padding.PaddingRight = UDim.new(0, 8)
-    padding.PaddingTop = UDim.new(0, 4)
-    padding.PaddingBottom = UDim.new(0, 12)
-
-    local grid = Instance.new("UIGridLayout", p)
-    grid.CellPadding = UDim2.new(0, 12, 0, 12)
-    grid.CellSize = UDim2.new(0.5, -6, 0, 64)
-    grid.SortOrder = Enum.SortOrder.LayoutOrder
-    grid.HorizontalAlignment = Enum.HorizontalAlignment.Left
-
-    local function syncCanvas()
-        local contentY = grid.AbsoluteContentSize.Y
-        local viewportY = p.AbsoluteSize.Y
-        local paddingY = padding.PaddingTop.Offset + padding.PaddingBottom.Offset
-        local totalY = math.max(contentY + paddingY, viewportY)
-        p.CanvasSize = UDim2.new(0, 0, 0, totalY)
-
-        -- clamp current scroll position so we can always scroll back up
-        local maxScroll = math.max(0, totalY - viewportY)
-        local current = p.CanvasPosition
-        if current.Y > maxScroll or current.Y < 0 then
-            p.CanvasPosition = Vector2.new(current.X, math.clamp(current.Y, 0, maxScroll))
-        end
-    end
-
-    grid:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(syncCanvas)
-    p:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncCanvas)
-    task.defer(syncCanvas)
-
-    return p
-end
-
-local function tabButton(text, page)
-    local b=Instance.new("TextButton", Side)
-    b.Size=UDim2.new(1,0,0,40); b.Text=text; b.Font=Enum.Font.Gotham; b.TextSize=15; b.TextColor3=T.Text
-    b.BackgroundColor3=T.Ink; b.AutoButtonColor=false; corner(b,10); stroke(b,T.Stroke,1,0.35)
-    local bar=Instance.new("Frame", b); bar.Size=UDim2.new(0,0,1,0); bar.Position=UDim2.new(0,0,0,0); bar.BackgroundColor3=T.Neon; corner(bar,10)
-    b.MouseButton1Click:Connect(function()
-        for _,c in ipairs(Content:GetChildren()) do
-            if c:IsA("GuiObject") then
-                c.Visible = false
-            end
-        end
-        for _,x in ipairs(Side:GetChildren()) do
-            if x:IsA("TextButton") then
-                TweenService:Create(x,TweenInfo.new(0.12),{BackgroundColor3=T.Ink}):Play()
-                local f=x:FindFirstChildOfClass("Frame"); if f then TweenService:Create(f,TweenInfo.new(0.12),{Size=UDim2.new(0,0,1,0)}):Play() end
-            end
-        end
-        page.Visible=true
-        if page:IsA("ScrollingFrame") then page.CanvasPosition = Vector2.new(0,0) end
-        TweenService:Create(b,TweenInfo.new(0.12),{BackgroundColor3=T.Accent}):Play()
-        TweenService:Create(bar,TweenInfo.new(0.12),{Size=UDim2.new(0,4,1,0)}):Play()
-    end)
-    return b
-end
-
--- floating tooltip bubble for control descriptions
-local Tooltip = Instance.new("Frame", App)
-Tooltip.Name = "ControlTooltip"
-Tooltip.Visible = false
-Tooltip.Active = false
-Tooltip.ZIndex = 200
-Tooltip.BackgroundColor3 = T.Panel
-Tooltip.BackgroundTransparency = 0.05
-Tooltip.Size = UDim2.fromOffset(220, 64)
-Tooltip.ClipsDescendants = false
-corner(Tooltip, 10)
-stroke(Tooltip, T.Stroke, 1, 0.2)
-
-local tooltipPad = Instance.new("UIPadding", Tooltip)
-tooltipPad.PaddingTop = UDim.new(0, 8)
-tooltipPad.PaddingBottom = UDim.new(0, 8)
-tooltipPad.PaddingLeft = UDim.new(0, 12)
-tooltipPad.PaddingRight = UDim.new(0, 12)
-
-local tooltipText = Instance.new("TextLabel", Tooltip)
-tooltipText.BackgroundTransparency = 1
-tooltipText.Size = UDim2.new(1, 0, 1, 0)
-tooltipText.Font = Enum.Font.Gotham
-tooltipText.TextSize = 13
-tooltipText.TextColor3 = T.Text
-tooltipText.TextWrapped = true
-tooltipText.TextXAlignment = Enum.TextXAlignment.Left
-tooltipText.TextYAlignment = Enum.TextYAlignment.Top
-tooltipText.ZIndex = Tooltip.ZIndex + 1
-
-local tooltipOwner = nil
-local tooltipBounds = Vector2.new(Tooltip.Size.X.Offset, Tooltip.Size.Y.Offset)
-
-local function updateTooltipPosition(x, y)
-    local vp = Camera.ViewportSize
-    local width = tooltipBounds.X
-    local height = tooltipBounds.Y
-    local px = math.clamp(x + 16, 8, vp.X - width - 8)
-    local py = math.clamp(y + 20, 8, vp.Y - height - 8)
-    Tooltip.Position = UDim2.fromOffset(px, py)
-end
-
-local function openTooltip(owner, text)
-    tooltipOwner = owner
-    tooltipText.Text = text
-    local bounds = TextService:GetTextSize(text, tooltipText.TextSize, tooltipText.Font, Vector2.new(280, 800))
-    local width = math.clamp(bounds.X + 24, 160, 320)
-    local height = math.clamp(bounds.Y + 16, 32, 220)
-    tooltipBounds = Vector2.new(width, height)
-    Tooltip.Size = UDim2.fromOffset(width, height)
-    Tooltip.Visible = true
-    local mouse = UserInputService:GetMouseLocation()
-    updateTooltipPosition(mouse.X, mouse.Y)
-end
-
-local function closeTooltip(owner)
-    if tooltipOwner ~= owner then return end
-    tooltipOwner = nil
-    Tooltip.Visible = false
-end
-
-local function trackTooltip(owner, x, y)
-    if tooltipOwner ~= owner then return end
-    updateTooltipPosition(x, y)
-end
-
-Root:GetPropertyChangedSignal("Visible"):Connect(function()
-    if not Root.Visible then
-        tooltipOwner = nil
-        Tooltip.Visible = false
-    end
-end)
-
--- Controls factory (compact, reused)
-local function rowBase(parent, name, desc)
-    local infoText = trim(desc or "")
-    local hasDesc = infoText ~= ""
-    local r = Instance.new("Frame", parent)
-    r.BackgroundColor3 = T.Card
-    r.Size = UDim2.new(0.5, -6, 0, 64)
-    corner(r, 10)
-    stroke(r, T.Stroke, 1, 0.25)
-
-    local labelOffset = hasDesc and 54 or 18
-    local labelWidth = hasDesc and -210 or -176
-
-    local l = Instance.new("TextLabel", r)
-    l.BackgroundTransparency = 1
-    l.Position = UDim2.new(0, labelOffset, 0, 0)
-    l.Size = UDim2.new(1, labelWidth, 1, 0)
-    l.Text = name
-    l.TextColor3 = T.Text
-    l.Font = Enum.Font.Gotham
-    l.TextSize = 14
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.TextYAlignment = Enum.TextYAlignment.Center
-    l.TextWrapped = true
-
-    if hasDesc then
-        local infoButton = Instance.new("TextButton", r)
-        infoButton.Name = "Info"
-        infoButton.Size = UDim2.fromOffset(26, 26)
-        infoButton.Position = UDim2.new(0, 18, 0.5, -13)
-        infoButton.BackgroundColor3 = T.Ink
-        infoButton.AutoButtonColor = false
-        infoButton.Text = "?"
-        infoButton.Font = Enum.Font.GothamBold
-        infoButton.TextSize = 16
-        infoButton.TextColor3 = T.Subtle
-        infoButton.ZIndex = 3
-        corner(infoButton, 13)
-        stroke(infoButton, T.Stroke, 1, 0.45)
-
-        local baseColor = infoButton.BackgroundColor3
-        local baseText = infoButton.TextColor3
-
-        infoButton.MouseEnter:Connect(function()
-            TweenService:Create(infoButton, TweenInfo.new(0.12), {
-                BackgroundColor3 = T.Accent,
-                TextColor3 = T.Text,
-            }):Play()
-            openTooltip(infoButton, infoText)
-        end)
-
-        infoButton.MouseLeave:Connect(function()
-            TweenService:Create(infoButton, TweenInfo.new(0.12), {
-                BackgroundColor3 = baseColor,
-                TextColor3 = baseText,
-            }):Play()
-            closeTooltip(infoButton)
-        end)
-
-        infoButton.MouseButton1Click:Connect(function()
-            openTooltip(infoButton, infoText)
-        end)
-
-        infoButton.MouseMoved:Connect(function(x, y)
-            trackTooltip(infoButton, x, y)
-        end)
-    end
-
-    return r, l
-end
-
-local function mkToggle(parent, name, default, cb, desc)
-    local r,_=rowBase(parent,name,desc)
-    local sw=Instance.new("Frame", r); sw.Size=UDim2.new(0,68,0,28); sw.Position=UDim2.new(1,-84,0.5,-14); sw.BackgroundColor3=T.Ink; corner(sw,16); stroke(sw,T.Stroke,1,0.35)
-    local k=Instance.new("Frame", sw); k.Size=UDim2.new(0,24,0,24); k.Position=UDim2.new(0,2,0.5,-12); k.BackgroundColor3=Color3.fromRGB(235,235,245); corner(k,12)
-    local state = default
-    local function set(v)
-        state=v
-        TweenService:Create(k,TweenInfo.new(0.12),{Position=v and UDim2.new(1,-26,0.5,-12) or UDim2.new(0,2,0.5,-12)}):Play()
-        TweenService:Create(sw,TweenInfo.new(0.12),{BackgroundColor3=v and T.Neon or T.Ink}):Play()
-        if cb then cb(v,r) end
-    end
-    sw.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then set(not state) end end)
-    set(state)
-    return {Row=r, Set=set, Get=function() return state end}
-end
-
-local function mkSlider(parent, name, min, max, default, cb, unit, desc)
-    local r,l=rowBase(parent,name,desc)
-    local hasDesc = trim(desc or "") ~= ""
-    local sliderLeft = hasDesc and 54 or 18
-    local valueWidth = 110
-    local rightPadding = 28
-
-    l.Position = UDim2.new(0, sliderLeft, 0, 6)
-    l.Size = UDim2.new(1, -(sliderLeft + valueWidth + rightPadding), 0, 26)
-    l.TextYAlignment = Enum.TextYAlignment.Top
-
-    local v=Instance.new("TextLabel", r); v.BackgroundTransparency=1; v.Size=UDim2.new(0,valueWidth,0,24); v.Position=UDim2.new(1,-valueWidth-18,0,6)
-    v.Text=""; v.TextColor3=T.Subtle; v.Font=Enum.Font.Gotham; v.TextSize=14; v.TextXAlignment=Enum.TextXAlignment.Right
-    v.TextYAlignment = Enum.TextYAlignment.Top
-
-    local bar=Instance.new("Frame", r); bar.Size=UDim2.new(1, -(sliderLeft + valueWidth + rightPadding), 0, 6); bar.Position=UDim2.new(0,sliderLeft,0,38); bar.BackgroundColor3=T.Ink; corner(bar,4)
-    local fill=Instance.new("Frame", bar); fill.Size=UDim2.new(0,0,1,0); fill.BackgroundColor3=T.Neon; corner(fill,4)
-
-    local val=math.clamp(default or min, min, max)
-    local function render()
-        local a=(val-min)/(max-min)
-        fill.Size=UDim2.new(a,0,1,0)
-        local u = unit and (" "..unit) or ""
-        v.Text = (math.floor(val*100+0.5)/100)..u
-    end
-    local dragging=false
-    bar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true end end)
-    UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
-    RunService.RenderStepped:Connect(function()
-        if dragging then
-            local m=UserInputService:GetMouseLocation().X; local x=bar.AbsolutePosition.X; local w=bar.AbsoluteSize.X
-            local a=math.clamp((m-x)/w,0,1); val=min + a*(max-min); render(); if cb then cb(val,r) end
-        end
-    end)
-    render()
-    return {Row=r, Set=function(x) val=math.clamp(x,min,max); render(); if cb then cb(val,r) end end, Get=function() return val end}
-end
-
--- simple button control (used for Kill Menu)
-local function mkButton(parent, name, onClick, opts, desc)
-    local r,_ = rowBase(parent, name, desc)
-    -- make the label take full width, then place a button pill on the right
-    local btn = Instance.new("TextButton", r)
-    btn.Size = UDim2.new(0, 120, 0, 30)
-    btn.Position = UDim2.new(1, -132, 0.5, -15)
-    opts = opts or {}
-    local danger = opts.danger
-    local buttonText = opts.buttonText or (danger and "Kill Menu" or "Run")
-    local baseColor = opts.backgroundColor or (danger and Color3.fromRGB(170, 60, 70) or T.Ink)
-    local hoverColor = opts.hoverColor or (danger and Color3.fromRGB(200, 75, 85) or T.Accent)
-    local textColor = opts.textColor or (danger and Color3.fromRGB(255,235,235) or T.Text)
-    btn.Text = buttonText
-    btn.Font = Enum.Font.GothamMedium
+local InputHolder = Instance.new("Frame", Field)
+InputHolder.BackgroundColor3 = Theme.Ink
+InputHolder.Size = UDim2.new(1, 0, 0, 40)
+InputHolder.LayoutOrder = 2
+corner(InputHolder, 12)
+local InputStroke = stroke(InputHolder, Theme.Stroke, 1, 0.45)
+
+local KeyBox = Instance.new("TextBox", InputHolder)
+KeyBox.BackgroundTransparency = 1
+KeyBox.Size = UDim2.new(1, -16, 1, 0)
+KeyBox.Position = UDim2.fromOffset(8, 0)
+KeyBox.ClearTextOnFocus = false
+KeyBox.Text = ""
+KeyBox.PlaceholderText = "Key"
+KeyBox.Font = Enum.Font.Gotham
+KeyBox.TextSize = 16
+KeyBox.TextColor3 = Theme.Text
+KeyBox.TextXAlignment = Enum.TextXAlignment.Left
+
+local ButtonRow = Instance.new("Frame", Field)
+ButtonRow.BackgroundTransparency = 1
+ButtonRow.Size = UDim2.new(1, 0, 0, 34)
+ButtonRow.LayoutOrder = 3
+
+local ButtonLayout = Instance.new("UIListLayout", ButtonRow)
+ButtonLayout.FillDirection = Enum.FillDirection.Horizontal
+ButtonLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+ButtonLayout.Padding = UDim.new(0, 10)
+
+local function makeButton(parent, text)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.fromOffset(150, 34)
+    btn.Text = text
+    btn.Font = Enum.Font.GothamSemibold
     btn.TextSize = 14
-    btn.TextColor3 = textColor
-    btn.BackgroundColor3 = baseColor
+    btn.TextColor3 = Theme.Text
+    btn.BackgroundColor3 = Theme.Accent
     btn.AutoButtonColor = false
-    corner(btn, 10)
-    stroke(btn, (danger and Color3.fromRGB(200,80,90)) or opts.strokeColor or T.Stroke, 1, 0.35)
-    btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3 = hoverColor}):Play()
-    end)
-    btn.MouseLeave:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3 = baseColor}):Play()
-    end)
-    btn.MouseButton1Click:Connect(function()
-        if onClick then onClick(r) end
-    end)
-    return {Row=r, Button=btn}
+    corner(btn, 12)
+stroke(btn, Theme.Stroke, 1, 0.35)
+    btn.Parent = parent
+    return btn
 end
 
-local function mkCycle(parent, name, options, default, cb, desc)
-    local r,_ = rowBase(parent, name, desc)
-    local btn = Instance.new("TextButton", r)
-    btn.Size = UDim2.new(0, 120, 0, 30)
-    btn.Position = UDim2.new(1, -132, 0.5, -15)
-    btn.Font = Enum.Font.GothamMedium
-    btn.TextSize = 14
-    btn.TextColor3 = T.Text
-    btn.BackgroundColor3 = T.Ink
-    btn.AutoButtonColor = false
-    corner(btn, 10)
-    stroke(btn, T.Stroke, 1, 0.35)
+local UnlockBtn = makeButton(ButtonRow, "Unlock")
+local CopyBtn = makeButton(ButtonRow, "Copy Key Link")
+CopyBtn.BackgroundColor3 = Theme.Ink
 
-    local normalized = {}
-    for i,opt in ipairs(options) do
-        if typeof(opt) == "table" then
-            normalized[i] = {
-                label = opt.label or opt.text or tostring(opt.value),
-                value = opt.value,
-            }
-        else
-            normalized[i] = {label = tostring(opt), value = opt}
-        end
-    end
+local StatusLabel = Instance.new("TextLabel", Field)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Size = UDim2.new(1, 0, 0, 20)
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.TextSize = 14
+StatusLabel.LayoutOrder = 4
 
-    local function findIndexByValue(val)
-        for i,opt in ipairs(normalized) do
-            if opt.value == val then return i end
-        end
-        return nil
-    end
-
-    local idx = 1
-    if default ~= nil then
-        if typeof(default) == "number" and normalized[default] then
-            idx = default
-        else
-            idx = findIndexByValue(default) or idx
-        end
-    end
-
-    local function apply(index)
-        if #normalized == 0 then return end
-        idx = ((index - 1) % #normalized) + 1
-        local opt = normalized[idx]
-        btn.Text = opt.label
-        if cb then cb(opt.value, r) end
-    end
-
-    btn.MouseButton1Click:Connect(function()
-        apply(idx + 1)
-    end)
-
-    btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3 = T.Accent}):Play()
-    end)
-    btn.MouseLeave:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3 = T.Ink}):Play()
-    end)
-
-    apply(idx)
-
-    return {
-        Row = r,
-        Set = function(value)
-            local targetIndex
-            if typeof(value) == "number" and normalized[value] then
-                targetIndex = value
-            else
-                targetIndex = findIndexByValue(value)
-            end
-            if targetIndex then
-                apply(targetIndex)
-            end
-        end,
-        Get = function()
-            if normalized[idx] then return normalized[idx].value end
-        end,
-    }
-end
-
---==================== FEATURE STATE ====================--
-local AA={
-    Enabled=false,
-    Strength=0.15,
-    PartName="Head",
-    ShowFOV=false,
-    FOVRadiusPx=180,
-    MaxDistance=250,
-    MinDistance=0,
-    Deadzone=4,
-    RequireRMB=false,
-    WallCheck=true,
-    DynamicPart=false,
-    StickyAim=false,
-    StickTime=0.35,
-    AdaptiveSmoothing=false,
-    CloseRangeBoost=0.2,
-    Prediction=0,
-    TargetSort="Hybrid",
-    DistanceWeight=0.02,
-    ReactionDelay=0,
-    ReactionJitter=0,
-    VerticalOffset=0,
-}
-local ESP={
-    Enabled=false,
-    EnemiesOnly=false,
-    UseDistance=true,
-    MaxDistance=1200,
-    EnemyColor=Color3.fromRGB(255,70,70),
-    FriendColor=Color3.fromRGB(0,255,140),
-    NeutralColor=Color3.fromRGB(255,255,0),
-    FillTransparency=0.5,
-    OutlineTransparency=0,
-    ThroughWalls=true,
-    ColorIntensity=1,
-}
-local Cross={
-    Enabled=false,
-    Color=Color3.fromRGB(0,255,200),
-    Opacity=0.9,
-    Size=8,
-    Gap=4,
-    Thickness=2,
-    CenterDot=false,
-    DotSize=2,
-    DotOpacity=1,
-    UseTeamColor=false,
-    Rainbow=false,
-    RainbowSpeed=1,
-    Pulse=false,
-    PulseSpeed=2.5,
-}
-
---==================== RUNTIME / DRAW ====================--
--- FOV ring
-local AA_GUI=Instance.new("ScreenGui"); AA_GUI.Name="PC_FOV"; AA_GUI.IgnoreGuiInset=true; AA_GUI.ResetOnSpawn=false; AA_GUI.DisplayOrder=45; AA_GUI.Parent=safeParent()
-local FOV=Instance.new("Frame", AA_GUI); FOV.AnchorPoint=Vector2.new(0.5,0.5); FOV.Position=UDim2.fromScale(0.5,0.5); FOV.BackgroundTransparency=1; FOV.Visible=false
-local FStroke=Instance.new("UIStroke", FOV); FStroke.Thickness=2; FStroke.Transparency=0.15; FStroke.Color=Color3.fromRGB(0,255,140); corner(FOV, math.huge)
-
--- Crosshair
-local CrossGui=Instance.new("ScreenGui"); CrossGui.Name="PC_Crosshair"; CrossGui.IgnoreGuiInset=true; CrossGui.ResetOnSpawn=false; CrossGui.DisplayOrder=44; CrossGui.Parent=safeParent()
-local function crossPart() local f=Instance.new("Frame"); f.BorderSizePixel=0; f.Parent=CrossGui; f.Visible=false; return f end
-local chL,chR,chU,chD = crossPart(),crossPart(),crossPart(),crossPart()
-local dot = crossPart()
-local function updCross()
-    if not Cross.Enabled then for _,f in ipairs({chL,chR,chU,chD,dot}) do f.Visible=false end return end
-    local vp=Camera.ViewportSize; local cx,cy=vp.X*0.5,vp.Y*0.5; local g,s,t=Cross.Gap,Cross.Size,Cross.Thickness
-
-    local color = Cross.Color
-    if Cross.Rainbow then
-        local h = (os.clock() * math.max(Cross.RainbowSpeed, 0)) % 1
-        color = Color3.fromHSV(h, 0.9, 1)
-    elseif Cross.UseTeamColor and LocalPlayer.TeamColor then
-        color = LocalPlayer.TeamColor.Color
-    end
-
-    local pulseFactor = 1
-    if Cross.Pulse then
-        local wave = math.sin(os.clock() * math.max(Cross.PulseSpeed, 0.01) * math.pi * 2) * 0.5 + 0.5
-        pulseFactor = 0.6 + 0.4 * wave
-    end
-
-    local baseOpacity = math.clamp(Cross.Opacity * pulseFactor, 0, 1)
-    local dotOpacity = math.clamp(Cross.DotOpacity * pulseFactor, 0, 1)
-
-    local function sty(f,opa)
-        f.BackgroundColor3=color
-        f.BackgroundTransparency=1-math.clamp(opa or baseOpacity,0,1)
-    end
-    chU.Size=UDim2.fromOffset(t,s); chU.Position=UDim2.fromOffset(cx - t/2, cy - g - s)
-    chD.Size=UDim2.fromOffset(t,s); chD.Position=UDim2.fromOffset(cx - t/2, cy + g)
-    chL.Size=UDim2.fromOffset(s,t); chL.Position=UDim2.fromOffset(cx - g - s, cy - t/2)
-    chR.Size=UDim2.fromOffset(s,t); chR.Position=UDim2.fromOffset(cx + g, cy - t/2)
-    for _,f in ipairs({chL,chR,chU,chD}) do sty(f); f.Visible=true end
-    dot.Size=UDim2.fromOffset(Cross.DotSize,Cross.DotSize); dot.Position=UDim2.fromOffset(cx - Cross.DotSize/2, cy - Cross.DotSize/2); sty(dot, dotOpacity); dot.Visible=Cross.CenterDot
-end
-RunService.RenderStepped:Connect(updCross)
-
--- Targeting helpers
-local function isEnemy(p) if p==LocalPlayer then return false end if LocalPlayer.Team and p.Team then return LocalPlayer.Team~=p.Team end return true end
-local function aimPart(c)
-    if not c then return nil end
-    if AA.DynamicPart then
-        for _,name in ipairs({"Head","UpperTorso","HumanoidRootPart","Torso"}) do
-            local part=c:FindFirstChild(name)
-            if part and part:IsA("BasePart") then return part end
-        end
-    end
-    local p=c:FindFirstChild(AA.PartName)
-    if not(p and p:IsA("BasePart")) then p=(c:FindFirstChild("UpperTorso") or c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Head")) end
-    return p
-end
-local function hasLOS(part,char)
-    if not AA.WallCheck then return true end
-    local origin=Camera.CFrame.Position; local dir=(part.Position-origin)
-    local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.FilterDescendantsInstances={LocalPlayer.Character, char}; rp.IgnoreWater=true
-    return workspace:Raycast(origin, dir, rp)==nil
-end
-local function buildCandidate(pl, my, cx, cy)
-    if not isEnemy(pl) then return nil end
-    local char = pl.Character
-    if not char then return nil end
-    local part = aimPart(char)
-    if not part then return nil end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
-    local maxDist = math.max(0, AA.MaxDistance or 0)
-    local minDist = math.clamp(AA.MinDistance or 0, 0, maxDist)
-    local dist = (hrp.Position-my.Position).Magnitude
-    if dist > maxDist or dist < minDist then return nil end
-    local sp,on = Camera:WorldToViewportPoint(part.Position)
-    if not on then return nil end
-    local dx,dy = sp.X-cx, sp.Y-cy
-    local pd = (dx*dx+dy*dy)^0.5
-    if pd>AA.FOVRadiusPx then return nil end
-    if not hasLOS(part, char) then return nil end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    return {
-        player = pl,
-        character = char,
-        part = part,
-        hrp = hrp,
-        humanoid = hum,
-        distance = dist,
-        pixelDist = pd,
-        screen = Vector2.new(sp.X, sp.Y),
-        velocity = (hrp.AssemblyLinearVelocity or part.AssemblyLinearVelocity or Vector3.zero),
-    }
-end
-local function scoreCandidate(info)
-    local mode = AA.TargetSort or "Hybrid"
-    if mode == "Distance" then
-        return info.distance
-    elseif mode == "Health" then
-        local hum = info.humanoid
-        if hum then return hum.Health end
-        return math.huge
-    elseif mode == "Angle" then
-        return info.pixelDist
+local function updateGateStatus(text, state)
+    StatusLabel.Text = text or ""
+    if state == "success" then
+        StatusLabel.TextColor3 = Theme.Good
+    elseif state == "error" then
+        StatusLabel.TextColor3 = Theme.Warn
     else
-        local w = math.clamp(AA.DistanceWeight or 0, 0, 0.25)
-        return info.pixelDist + info.distance * w
+        StatusLabel.TextColor3 = Theme.Subtle
     end
 end
-local function getTarget()
-    local my=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"); if not my then return nil end
-    local cx,cy=Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2; local best,bScore
-    for _,pl in ipairs(Players:GetPlayers()) do
-        local info = buildCandidate(pl, my, cx, cy)
-        if info then
-            local sc = scoreCandidate(info)
-            if not bScore or sc < bScore then
-                best,bScore = info,sc
-            end
-        end
-    end
-    return best
-end
 
-local stickyTarget, stickyTimer = nil, 0
-local rng = Random.new()
-local lastTargetPart, reactionTimer = nil, 0
-local function validateTarget(info)
-    return info and info.part and info.part:IsDescendantOf(workspace)
-end
-local function refreshTarget(info)
-    if not validateTarget(info) then return nil end
-    local player = info.player
-    if not player then return nil end
-    local char = player.Character
-    if not char then return nil end
-    info.character = char
-    info.part = info.part and info.part.Parent and info.part or aimPart(char)
-    if not info.part then return nil end
-    info.hrp = char:FindFirstChild("HumanoidRootPart")
-    if not info.hrp then return nil end
-    info.humanoid = char:FindFirstChildOfClass("Humanoid")
-    local my = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not my then return nil end
-    local maxDist = math.max(0, AA.MaxDistance or 0)
-    local minDist = math.clamp(AA.MinDistance or 0, 0, maxDist)
-    info.distance = (info.hrp.Position - my.Position).Magnitude
-    if info.distance > maxDist or info.distance < minDist then return nil end
-    local sp,on = Camera:WorldToViewportPoint(info.part.Position)
-    info.screen = Vector2.new(sp.X, sp.Y)
-    local cx,cy = Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2
-    local dx,dy = sp.X-cx, sp.Y-cy
-    info.pixelDist = (dx*dx+dy*dy)^0.5
-    if AA.WallCheck and not hasLOS(info.part, char) then return nil end
-    info.onScreen = on
-    info.velocity = (info.hrp.AssemblyLinearVelocity or info.part.AssemblyLinearVelocity or Vector3.zero)
-    return info
-end
-
--- Main render
-RunService.RenderStepped:Connect(function(dt)
-    local fovRadius = math.max(0, AA.FOVRadiusPx or 0)
-    FOV.Visible = (AA.Enabled and AA.ShowFOV)
-    FOV.Size    = UDim2.fromOffset(fovRadius*2, fovRadius*2)
-
-    local aiming = AA.Enabled and (not AA.RequireRMB or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2))
-    if aiming then
-        local candidate = getTarget()
-        if AA.StickyAim then
-            if candidate then
-                stickyTarget = candidate
-                stickyTimer = AA.StickTime
-            else
-                stickyTimer = math.max(0, stickyTimer - dt)
-                if stickyTimer <= 0 then
-                    stickyTarget = nil
-                end
-            end
-        else
-            stickyTarget = nil
-            stickyTimer = 0
-        end
-
-        if stickyTarget then
-            stickyTarget = refreshTarget(stickyTarget)
-            if not stickyTarget then
-                stickyTimer = 0
-            end
-        end
-
-        local targetInfo = stickyTarget or candidate
-        if targetInfo and not validateTarget(targetInfo) then
-            targetInfo = nil
-            if stickyTarget and not validateTarget(stickyTarget) then
-                stickyTarget = nil
-                stickyTimer = 0
-            end
-        end
-
-        if targetInfo then
-            if targetInfo.part ~= lastTargetPart then
-                lastTargetPart = targetInfo.part
-                local delay = math.max(0, AA.ReactionDelay or 0)
-                local jitter = math.max(0, AA.ReactionJitter or 0)
-                if jitter > 0 then
-                    delay = delay + rng:NextNumber(0, jitter)
-                end
-                reactionTimer = delay
-            end
-
-            if reactionTimer > 0 then
-                reactionTimer = math.max(0, reactionTimer - dt)
-            else
-                local pos = Camera.CFrame.Position
-                local targetPos = targetInfo.part.Position + Vector3.new(0, AA.VerticalOffset or 0, 0)
-                if AA.Prediction > 0 then
-                    targetPos = targetPos + targetInfo.velocity * math.clamp(AA.Prediction, 0, 1.5)
-                end
-                local des = CFrame.lookAt(pos, targetPos)
-                local alpha = math.clamp(AA.Strength + dt*0.5, 0, 1)
-                if AA.AdaptiveSmoothing then
-                    local normalized = 1 - math.clamp((targetInfo.distance or 0) / math.max(AA.MaxDistance, 1), 0, 1)
-                    alpha = math.clamp(alpha + normalized * AA.CloseRangeBoost, 0, 1)
-                end
-
-                local deadzone = math.max(0, AA.Deadzone or 0)
-                if deadzone > 0 then
-                    local closeness = (targetInfo.pixelDist - deadzone) / math.max(deadzone, 1)
-                    if closeness > 0 then
-                        local scale = math.clamp(closeness, 0.05, 1)
-                        Camera.CFrame = Camera.CFrame:Lerp(des, math.clamp(alpha * scale, 0, 1))
-                    end
-                else
-                    Camera.CFrame = Camera.CFrame:Lerp(des, alpha)
-                end
-            end
-        else
-            lastTargetPart = nil
-            reactionTimer = 0
-        end
+local function refreshKeyHint()
+    updateGateStatus(gateHint())
+    local expected = expectedKey()
+    if expected == false then
+        KeyBox.PlaceholderText = "Ingen nøkkel kreves"
+    elseif expected == "" then
+        KeyBox.PlaceholderText = "Valgfritt – skriv noe"
     else
-        lastTargetPart = nil
-        reactionTimer = 0
-    end
-end)
-
--- ESP (Highlight)
-local function hl(model)
-    local h = model:FindFirstChild("_HL_")
-    if not h then
-        h = Instance.new("Highlight")
-        h.Name = "_HL_"
-        h.DepthMode = ESP.ThroughWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-        h.FillTransparency = ESP.FillTransparency
-        h.OutlineTransparency = ESP.OutlineTransparency
-        h.Parent = model
-    end
-    -- make sure it adorns the whole character even if parent/rig is unusual
-    h.Adornee = model
-    return h
-end
-local function isEnemyESP(p) if not LocalPlayer.Team or not p.Team then return nil end return LocalPlayer.Team~=p.Team end
-local function distTo(c) local hrp=c and c:FindFirstChild("HumanoidRootPart"); local my=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"); if hrp and my then return (hrp.Position-my.Position).Magnitude end return math.huge end
-local function tintESPColor(color)
-    local h,s,v = Color3.toHSV(color)
-    local intensity = math.clamp(ESP.ColorIntensity or 1, 0, 2)
-    v = math.clamp(v * intensity, 0, 1)
-    local satScale = math.clamp(0.55 + 0.45 * intensity, 0, 1.5)
-    s = math.clamp(s * satScale, 0, 1)
-    return Color3.fromHSV(h, s, v)
-end
-local function espTick(p)
-    if p==LocalPlayer then return end
-    local c=p.Character; if not c then return end
-    local h=hl(c); local show=ESP.Enabled
-    if show and ESP.EnemiesOnly then local e=isEnemyESP(p); show=(e==true) end
-    if show and ESP.UseDistance then show=distTo(c)<=ESP.MaxDistance end
-    h.Enabled=show; if not show then return end
-    h.DepthMode = ESP.ThroughWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-    h.FillTransparency = math.clamp(ESP.FillTransparency, 0, 1)
-    h.OutlineTransparency = math.clamp(ESP.OutlineTransparency, 0, 1)
-    local e=isEnemyESP(p)
-    if e==true then
-        local col = tintESPColor(ESP.EnemyColor)
-        h.FillColor=col; h.OutlineColor=col
-    elseif e==false then
-        local col = tintESPColor(ESP.FriendColor)
-        h.FillColor=col; h.OutlineColor=col
-    else
-        local col = tintESPColor(ESP.NeutralColor)
-        h.FillColor=col; h.OutlineColor=col
+        KeyBox.PlaceholderText = tostring(expected)
     end
 end
-RunService.RenderStepped:Connect(function() for _,pl in ipairs(Players:GetPlayers()) do espTick(pl) end end)
-Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(function() task.wait(0.2); espTick(p) end) end)
 
---==================== PAGES & CONTROLS ====================--
-local AimbotP = newPage("Aimbot")
-local ESPP    = newPage("ESP")
-local VisualP = newPage("Visuals")
-local MiscP   = newPage("Misc")
-local ConfP   = newPage("Config")
-
-local ESPColorPresets = {
-    {label = "Crimson Pulse", value = Color3.fromRGB(255, 70, 70)},
-    {label = "Solar Gold", value = Color3.fromRGB(255, 255, 0)},
-    {label = "Toxic Lime", value = Color3.fromRGB(0, 255, 140)},
-    {label = "Electric Azure", value = Color3.fromRGB(90, 190, 255)},
-    {label = "Aurora Cyan", value = Color3.fromRGB(70, 255, 255)},
-    {label = "Royal Violet", value = Color3.fromRGB(180, 110, 255)},
-    {label = "Sunburst", value = Color3.fromRGB(255, 170, 60)},
-    {label = "Frostbite", value = Color3.fromRGB(210, 235, 255)},
-}
-
--- create tabs (avoid firing signals programmatically)
-tabButton("Aimbot", AimbotP)
-tabButton("ESP", ESPP)
-tabButton("Visuals", VisualP)
-tabButton("Misc", MiscP)
-tabButton("Config", ConfP)
--- make Aimbot page visible by default
-AimbotP.Visible = true
-
--- Aimbot block
-mkToggle(AimbotP,"Enable Aimbot", AA.Enabled, function(v) AA.Enabled=v end, "Turns the aimbot feature on or off.")
-mkToggle(AimbotP,"Require Right Mouse (hold)", AA.RequireRMB, function(v) AA.RequireRMB=v end, "Only activates the aimbot while the right mouse button is held down.")
-mkToggle(AimbotP,"Wall Check (line of sight)", AA.WallCheck, function(v) AA.WallCheck=v end, "Skips targets that are blocked by walls or other geometry.")
-mkToggle(AimbotP,"Show FOV", AA.ShowFOV, function(v) AA.ShowFOV=v end, "Displays the aiming field-of-view circle on your screen.")
-mkSlider(AimbotP,"FOV Radius", 40, 500, AA.FOVRadiusPx, function(x) AA.FOVRadiusPx=math.floor(x) end,"px", "Sets the radius of the aim assist field-of-view circle in pixels.")
-mkSlider(AimbotP,"Deadzone Padding", 0, 20, AA.Deadzone, function(x) AA.Deadzone=x end,"px", "Defines an inner deadzone where the aimbot will not move the camera.")
-mkSlider(AimbotP,"Strength (lower=stronger)", 0.05, 0.40, AA.Strength, function(x) AA.Strength=x end,nil, "Controls how strongly the camera lerps toward the target (lower means snappier).")
-mkSlider(AimbotP,"Max Distance", 50, 1000, AA.MaxDistance, function(x) AA.MaxDistance=math.floor(x) end,"studs", "Limits aiming to targets within this distance.")
-mkSlider(AimbotP,"Min Distance Gate", 0, 250, AA.MinDistance, function(x) AA.MinDistance=math.floor(x) end,"studs", "Ignores targets that are closer than this distance.")
-local targetPriority = mkCycle(AimbotP,"Target Priority", {
-    {label="Hybrid (angle+distance)", value="Hybrid"},
-    {label="Closest Angle", value="Angle"},
-    {label="Closest Distance", value="Distance"},
-    {label="Lowest Health", value="Health"},
-}, AA.TargetSort, function(val) AA.TargetSort=val end, "Chooses how potential targets are ranked before aiming.")
-local distanceWeight = mkSlider(AimbotP,"Hybrid Distance Weight", 0, 0.08, AA.DistanceWeight, function(x) AA.DistanceWeight=x end,nil, "Adjusts how much distance influences the hybrid priority mode.")
-local dynamicPartToggle
-dynamicPartToggle = mkToggle(AimbotP,"Auto Bone Selection", AA.DynamicPart, function(v) AA.DynamicPart=v end, "Automatically chooses which body part to aim at based on target movement.")
-local partCycle = mkCycle(AimbotP,"Manual Target Bone", {"Head","UpperTorso","HumanoidRootPart"}, AA.PartName, function(val) AA.PartName=val end, "Selects the specific body part to aim at when auto selection is disabled.")
-local stickyToggle = mkToggle(AimbotP,"Sticky Aim (keep last target)", AA.StickyAim, function(v)
-    AA.StickyAim=v
-    if not v then stickyTarget=nil; stickyTimer=0 end
-end, "Keeps following the most recent target for a short period even if they leave the FOV.")
-local stickyDuration = mkSlider(AimbotP,"Sticky Duration", 0.1, 1.5, AA.StickTime, function(x)
-    AA.StickTime=x
-    stickyTimer = math.min(stickyTimer, AA.StickTime)
-end,"s", "How long sticky aim should hold onto the previous target.")
-local reactionDelay = mkSlider(AimbotP,"Reaction Delay", 0, 0.35, AA.ReactionDelay, function(x) AA.ReactionDelay=x end,"s", "Adds a delay before the aimbot begins to adjust toward a target.")
-local reactionJitter = mkSlider(AimbotP,"Reaction Jitter", 0, 0.3, AA.ReactionJitter, function(x) AA.ReactionJitter=x end,"s", "Adds random variation to the reaction delay for a more human feel.")
-local adaptiveToggle = mkToggle(AimbotP,"Adaptive Smoothing Boost", AA.AdaptiveSmoothing, function(v) AA.AdaptiveSmoothing=v end, "Boosts smoothing strength as enemies move closer to you.")
-local closeBoost = mkSlider(AimbotP,"Close-range Boost", 0, 0.6, AA.CloseRangeBoost, function(x) AA.CloseRangeBoost=x end,nil, "Amount of extra smoothing applied when targets are nearby.")
-local predictionSlider = mkSlider(AimbotP,"Lead Prediction", 0, 0.75, AA.Prediction, function(x) AA.Prediction=x end,"s", "Predicts where moving targets will be after this many seconds.")
-local heightOffset = mkSlider(AimbotP,"Aim Height Offset", -2, 2, AA.VerticalOffset, function(x) AA.VerticalOffset=x end,"studs", "Shifts the aim point up or down relative to the target.")
-
-setInteractable(stickyDuration.Row, AA.StickyAim)
-setInteractable(closeBoost.Row, AA.AdaptiveSmoothing)
-if partCycle and partCycle.Row then setInteractable(partCycle.Row, not AA.DynamicPart) end
-if reactionJitter and reactionJitter.Row then setInteractable(reactionJitter.Row, (AA.ReactionDelay or 0) > 0) end
-if distanceWeight and distanceWeight.Row then setInteractable(distanceWeight.Row, (AA.TargetSort or "Hybrid") == "Hybrid") end
-RunService.RenderStepped:Connect(function()
-    setInteractable(stickyDuration.Row, AA.StickyAim)
-    setInteractable(closeBoost.Row, AA.AdaptiveSmoothing)
-    if partCycle and partCycle.Row then setInteractable(partCycle.Row, not AA.DynamicPart) end
-    if reactionJitter and reactionJitter.Row then setInteractable(reactionJitter.Row, (AA.ReactionDelay or 0) > 0) end
-    if distanceWeight and distanceWeight.Row then setInteractable(distanceWeight.Row, (AA.TargetSort or "Hybrid") == "Hybrid") end
-end)
-
--- ESP
-mkToggle(ESPP,"Enable ESP", ESP.Enabled, function(v) ESP.Enabled=v end, "Turns highlight ESP visuals on or off.")
-mkToggle(ESPP,"Enemies Only", ESP.EnemiesOnly, function(v) ESP.EnemiesOnly=v end, "Only shows ESP highlights on enemy players.")
-mkToggle(ESPP,"Use Distance Limit", ESP.UseDistance, function(v) ESP.UseDistance=v end, "Restricts ESP to players within the max distance slider.")
-mkSlider(ESPP,"Max Distance", 50, 2000, ESP.MaxDistance, function(x) ESP.MaxDistance=math.floor(x) end,"studs", "Sets the farthest distance that ESP highlights will appear.")
-mkToggle(ESPP,"Render Through Walls", ESP.ThroughWalls, function(v) ESP.ThroughWalls=v end, "Forces highlight outlines to show even through walls.")
-mkSlider(ESPP,"Fill Transparency", 0, 1, ESP.FillTransparency, function(x) ESP.FillTransparency=x end,nil, "Adjusts how solid the ESP highlight fill appears.")
-mkSlider(ESPP,"Outline Transparency", 0, 1, ESP.OutlineTransparency, function(x) ESP.OutlineTransparency=x end,nil, "Adjusts how visible the ESP outline is.")
-mkSlider(ESPP,"Color Intensity", 0.4, 1.6, ESP.ColorIntensity, function(x) ESP.ColorIntensity=x end,nil, "Boosts or softens highlight brightness for every player type.")
-mkCycle(ESPP, "Enemy Highlight", ESPColorPresets, ESP.EnemyColor, function(col) ESP.EnemyColor = col end, "Choose the glow color used when enemies are highlighted.")
-mkCycle(ESPP, "Friendly Highlight", ESPColorPresets, ESP.FriendColor, function(col) ESP.FriendColor = col end, "Select the highlight tint for teammates and allies.")
-mkCycle(ESPP, "Neutral Highlight", ESPColorPresets, ESP.NeutralColor, function(col) ESP.NeutralColor = col end, "Pick the tone shown for players with no team alignment.")
-
--- Visuals
-local crossT = mkToggle(VisualP,"Crosshair", Cross.Enabled, function(v) Cross.Enabled=v; updCross() end, "Shows or hides the custom crosshair overlay.")
-mkSlider(VisualP,"Opacity", 0.1,1, Cross.Opacity, function(x) Cross.Opacity=x; updCross() end,nil, "Sets how transparent the crosshair appears.")
-mkSlider(VisualP,"Size", 4,24, Cross.Size, function(x) Cross.Size=math.floor(x); updCross() end,nil, "Controls the overall length of the crosshair lines.")
-mkSlider(VisualP,"Gap", 2,20, Cross.Gap, function(x) Cross.Gap=math.floor(x); updCross() end,nil, "Adjusts the gap between the crosshair arms and the center.")
-mkSlider(VisualP,"Thickness", 1,6, Cross.Thickness, function(x) Cross.Thickness=math.floor(x); updCross() end,nil, "Changes how thick each crosshair arm is.")
-local dotT = mkToggle(VisualP,"Center Dot", Cross.CenterDot, function(v) Cross.CenterDot=v; updCross() end, "Adds a dot to the middle of the crosshair.")
-local dotS = mkSlider(VisualP,"Dot Size", 1,6, Cross.DotSize, function(x) Cross.DotSize=math.floor(x); updCross() end,nil, "Sets the size of the center dot.")
-local dotO = mkSlider(VisualP,"Dot Opacity", 0.1,1, Cross.DotOpacity, function(x) Cross.DotOpacity=x; updCross() end,nil, "Controls the transparency of the center dot.")
-local teamColorToggle
-local rainbowToggle
-teamColorToggle = mkToggle(VisualP,"Use Team Color", Cross.UseTeamColor, function(v)
-    Cross.UseTeamColor=v
-    if v and rainbowToggle then
-        Cross.Rainbow=false
-        rainbowToggle.Set(false)
-    end
-    updCross()
-end, "Applies your current team color to the crosshair.")
-rainbowToggle = mkToggle(VisualP,"Rainbow Cycle", Cross.Rainbow, function(v)
-    Cross.Rainbow=v
-    if v and teamColorToggle then
-        Cross.UseTeamColor=false
-        teamColorToggle.Set(false)
-    end
-    updCross()
-end, "Cycles crosshair colors through a rainbow gradient.")
-local rainbowSpeed = mkSlider(VisualP,"Rainbow Speed", 0.2, 3, Cross.RainbowSpeed, function(x) Cross.RainbowSpeed=x; updCross() end,nil, "Controls how quickly the rainbow effect animates.")
-local pulseToggle = mkToggle(VisualP,"Pulse Opacity", Cross.Pulse, function(v) Cross.Pulse=v; updCross() end, "Makes the crosshair fade in and out repeatedly.")
-local pulseSpeed = mkSlider(VisualP,"Pulse Speed", 0.5, 5, Cross.PulseSpeed, function(x) Cross.PulseSpeed=x; updCross() end,nil, "Sets the speed of the crosshair opacity pulse.")
-RunService.RenderStepped:Connect(function()
-    local on=Cross.CenterDot; setInteractable(dotS.Row,on); setInteractable(dotO.Row,on)
-    if rainbowSpeed then setInteractable(rainbowSpeed.Row, Cross.Rainbow) end
-    if pulseSpeed then setInteractable(pulseSpeed.Row, Cross.Pulse) end
-end)
-
--- Misc
-mkToggle(MiscP,"Press K to toggle UI", true, function() end, "Reminder that you can press K to hide or show the panel.")
-local dragToggle = mkToggle(MiscP,"Allow Dragging", true, function(v)
-    draggingEnabled = v
-    if not v then dragging=false end
-end, "Enables dragging the window around the screen.")
-local centerBtn = mkButton(MiscP, "Center Panel", function()
-    Root.Position = UDim2.fromScale(0.5,0.5)
-    dragging = false
-end, {buttonText="Center"}, "Recenters the panel on your screen.")
-local scaleSlider = mkSlider(MiscP,"UI Scale", 0.85, 1.25, PanelScale.Scale, function(x) PanelScale.Scale=x end,"x", "Changes the overall size of the menu UI.")
-
-local creditCard = Instance.new("Frame", MiscP)
-creditCard.Name = "CreditsCard"
-creditCard.BackgroundColor3 = T.Card
-creditCard.Size = UDim2.new(0.5, -6, 0, 64)
-corner(creditCard, 10)
-stroke(creditCard, T.Stroke, 1, 0.25)
-
-local creditPadding = Instance.new("UIPadding", creditCard)
-creditPadding.PaddingLeft = UDim.new(0, 18)
-creditPadding.PaddingRight = UDim.new(0, 18)
-creditPadding.PaddingTop = UDim.new(0, 12)
-creditPadding.PaddingBottom = UDim.new(0, 12)
-
-local creditTitle = Instance.new("TextLabel", creditCard)
-creditTitle.BackgroundTransparency = 1
-creditTitle.Position = UDim2.new(0, 0, 0, 0)
-creditTitle.Size = UDim2.new(1, -140, 0, 22)
-creditTitle.Font = Enum.Font.GothamBold
-creditTitle.Text = "Made by ProfitCruiser"
-creditTitle.TextColor3 = T.Text
-creditTitle.TextSize = 15
-creditTitle.TextXAlignment = Enum.TextXAlignment.Left
-creditTitle.TextYAlignment = Enum.TextYAlignment.Top
-
-local creditSub = Instance.new("TextLabel", creditCard)
-creditSub.BackgroundTransparency = 1
-creditSub.Position = UDim2.new(0, 0, 0, 24)
-creditSub.Size = UDim2.new(1, -140, 1, -28)
-creditSub.Font = Enum.Font.Gotham
-creditSub.Text = "Made by ProfitCruiser"
-creditSub.TextColor3 = T.Subtle
-creditSub.TextSize = 12
-creditSub.TextWrapped = true
-creditSub.TextXAlignment = Enum.TextXAlignment.Left
-creditSub.TextYAlignment = Enum.TextYAlignment.Top
-
-local discordBtn = Instance.new("TextButton", creditCard)
-discordBtn.Name = "DiscordCopy"
-discordBtn.AutoButtonColor = false
-discordBtn.Size = UDim2.new(0, 120, 0, 34)
-discordBtn.Position = UDim2.new(1, -132, 0.5, -17)
-discordBtn.Font = Enum.Font.GothamBold
-discordBtn.Text = "Discord"
-discordBtn.TextColor3 = T.Text
-discordBtn.TextSize = 14
-discordBtn.BackgroundColor3 = T.Accent
-corner(discordBtn, 12)
-stroke(discordBtn, T.Stroke, 1, 0.3)
-
-local discordHover = T.Neon
-local discordBase = discordBtn.BackgroundColor3
-discordBtn.MouseEnter:Connect(function()
-    TweenService:Create(discordBtn, TweenInfo.new(0.12), {BackgroundColor3 = discordHover}):Play()
-end)
-discordBtn.MouseLeave:Connect(function()
-    TweenService:Create(discordBtn, TweenInfo.new(0.12), {BackgroundColor3 = discordBase}):Play()
-end)
-
-local defaultSubText = creditSub.Text
-local copySignal = 0
-discordBtn.MouseButton1Click:Connect(function()
-    copySignal += 1
-    local ticket = copySignal
-    local success = false
+CopyBtn.MouseButton1Click:Connect(function()
     if setclipboard then
-        success = pcall(function()
-            setclipboard(DISCORD_URL)
-        end)
-        success = success == true
-    end
-    if success then
-        creditSub.Text = "Discord Link Copyed"
-        creditSub.TextColor3 = T.Good
+        setclipboard(KEY_LINK)
+        updateGateStatus("Lenke kopiert til utklippstavlen", "success")
     else
-        creditSub.Text = "Kunne ikke kopiere automatisk — bruk lenken: " .. DISCORD_URL
-        creditSub.TextColor3 = T.Warn
+        updateGateStatus("Kan ikke kopiere i denne executoren", "error")
     end
-    TweenService:Create(creditSub, TweenInfo.new(0.12), {TextTransparency = 0}):Play()
-    task.delay(1.6, function()
-        if copySignal == ticket then
-            creditSub.Text = defaultSubText
-            creditSub.TextColor3 = T.Subtle
+    task.delay(2, function()
+        if GateGui.Enabled then
+            refreshKeyHint()
         end
     end)
 end)
 
--- Kill Menu logic
-local function killMenu()
-    -- hide all UIs
-    if Root then Root.Visible = false end
-    if Gate then Gate.Enabled = false end
-    if SuccessGui then SuccessGui.Enabled = false end
-    if AA_GUI then AA_GUI.Enabled = false end
-    if CrossGui then CrossGui.Enabled = false end
-    -- remove blur
-    TweenService:Create(Blur, TweenInfo.new(0.15), {Size = 0}):Play()
+local function openPanel()
+    GateGui.Enabled = false
     Blur.Enabled = false
-    -- disable features so runtime loops render nothing
-    AA.Enabled=false; ESP.Enabled=false; Cross.Enabled=false; updCross()
-    stickyTarget=nil; stickyTimer=0
-    -- clean existing highlights
-    for _,pl in ipairs(Players:GetPlayers()) do
-        local ch = pl.Character
-        if ch then local h = ch:FindFirstChild("_HL_"); if h then pcall(function() h:Destroy() end) end end
+    Blur.Size = 0
+    RootGui.Enabled = true
+    ensureAutoSync()
+end
+
+local function setInputFeedback(state)
+    local bg = Theme.Ink
+    local strokeColor = Theme.Stroke
+    if state == "success" then
+        strokeColor = Theme.Good
+    elseif state == "error" then
+        bg = Color3.fromRGB(58, 24, 38)
+        strokeColor = Theme.Warn
+    end
+    tween(InputHolder, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = bg})
+    if InputStroke then
+        tween(InputStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Color = strokeColor})
     end
 end
 
--- panic key (P) also kills the menu
-UserInputService.InputBegan:Connect(function(i)
-    if i.KeyCode==Enum.KeyCode.K then Root.Visible = not Root.Visible end
-    if i.KeyCode==Enum.KeyCode.P then killMenu() end
-end)
-
--- Button to kill menu
-mkButton(MiscP, "Kill Menu (remove UI)", function() killMenu() end, {danger=true, buttonText="Kill Menu"}, "Completely closes the UI and disables every feature until re-executed.")
-
--- Config / profiles
-local BASE="ProfitCruiser"; local PROF=BASE.."/Profiles"; local MODE="memory"; local MEM=rawget(_G,"PC_ProfileStore") or {}; _G.PC_ProfileStore=MEM
-local function ensure() if makefolder then local ok1=true if not (isfolder and isfolder(BASE)) then ok1=pcall(function() makefolder(BASE) end) end local ok2=true if not (isfolder and isfolder(PROF)) then ok2=pcall(function() makefolder(PROF) end) end return ok1 and ok2 end return false end
-if ensure() and writefile and readfile then MODE="filesystem" end
-local function deep(dst,src) for k,v in pairs(src) do if typeof(v)=="table" and typeof(dst[k])=="table" then deep(dst[k],v) else dst[k]=v end end end
-local function gather() return {AA=AA, ESP=ESP, Cross=Cross} end
-local function apply(s)
-    if not s then return end
-    deep(AA,s.AA or {})
-    deep(ESP,s.ESP or {})
-    deep(Cross,s.Cross or {})
-    updCross()
+local function attemptUnlock()
+    local input = KeyBox.Text
+    if checkKey(input) then
+        setInputFeedback("success")
+        updateGateStatus("Godkjent!", "success")
+        KeyBox.Text = ""
+        tween(Card, TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {BackgroundTransparency = 1})
+        Blur.Enabled = true
+        Blur.Size = 12
+        task.delay(0.32, openPanel)
+    else
+        setInputFeedback("error")
+        updateGateStatus("Feil nøkkel. Prøv igjen.", "error")
+        task.delay(0.4, function()
+            if GateGui.Enabled then
+                setInputFeedback()
+                refreshKeyHint()
+            end
+        end)
+    end
 end
-local function save(name) local ok,data=pcall(function() return HttpService:JSONEncode(gather()) end); if not ok then return false,"encode" end if MODE=="filesystem" then local p=PROF.."/"..name..".json"; local s,err=pcall(function() writefile(p,data) end); return s,(s and nil or tostring(err)) else MEM[name]=data; return true end end
-local function load(name) if MODE=="filesystem" then local p=PROF.."/"..name..".json"; if not (isfile and isfile(p)) then return false,"missing" end local ok,raw=pcall(function() return readfile(p) end); if not ok then return false,"read" end local ok2,tbl=pcall(function() return HttpService:JSONDecode(raw) end); if not ok2 then return false,"decode" end apply(tbl); return true else local raw=MEM[name]; if not raw then return false,"missing" end local ok2,tbl=pcall(function() return HttpService:JSONDecode(raw) end); if not ok2 then return false,"decode" end apply(tbl); return true end end
 
-local saveBtn = mkToggle(ConfP,"Save Default (click)", false, function(v,row) if v then local ok,err=save("Default"); (row:FindFirstChildWhichIsA("TextLabel")).Text = ok and "Saved Default ✅" or ("Save failed: "..tostring(err)); task.delay(0.4,function() (row:FindFirstChildWhichIsA("TextLabel")).Text="Save Default (click)" end) end end, "Saves your current settings into the Default profile slot.")
-local loadBtn = mkToggle(ConfP,"Load Default (click)", false, function(v,row) if v then local ok,err=load("Default"); (row:FindFirstChildWhichIsA("TextLabel")).Text = ok and "Loaded Default ✅" or ("Load failed: "..tostring(err)); task.delay(0.4,function() (row:FindFirstChildWhichIsA("TextLabel")).Text="Load Default (click)" end) end end, "Loads the Default profile back into all features.")
+UnlockBtn.MouseButton1Click:Connect(attemptUnlock)
 
--- Show panel when gate closes (only if allowed by flow)
-Gate:GetPropertyChangedSignal("Enabled"):Connect(function()
-    local on = Gate.Enabled
-    TweenService:Create(Blur, TweenInfo.new(0.2), {Size = on and 8 or 0}):Play()
-    Blur.Enabled = on or (not on and not allowReveal)
-    -- Only reveal Root if gate closed AND the reveal flag was set (set after overlay finishes)
-    if (not on) and allowReveal and Root then
-        Root.Visible = true
+KeyBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        attemptUnlock()
     end
 end)
+
+refreshKeyHint()
+if expectedKey() == false then
+    task.defer(attemptUnlock)
+end
+
+--// Main panel -----------------------------------------
+RootGui.Enabled = false
+
+local Panel = Instance.new("Frame", RootGui)
+Panel.Name = "Panel"
+Panel.AnchorPoint = Vector2.new(0.5, 0.5)
+Panel.Position = UDim2.fromScale(0.5, 0.52)
+Panel.Size = UDim2.fromOffset(880, 460)
+Panel.BackgroundColor3 = Theme.Panel
+Panel.BorderSizePixel = 0
+corner(Panel, 20)
+stroke(Panel, Theme.Stroke, 1, 0.38)
+makeShadow(Panel)
+
+local PanelPad = Instance.new("UIPadding", Panel)
+PanelPad.PaddingTop = UDim.new(0, 18)
+PanelPad.PaddingBottom = UDim.new(0, 18)
+PanelPad.PaddingLeft = UDim.new(0, 18)
+PanelPad.PaddingRight = UDim.new(0, 18)
+
+local PanelLayout = Instance.new("UIListLayout", Panel)
+PanelLayout.FillDirection = Enum.FillDirection.Vertical
+PanelLayout.Padding = UDim.new(0, 16)
+PanelLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local Header = Instance.new("Frame", Panel)
+Header.Name = "Header"
+Header.BackgroundTransparency = 1
+Header.Size = UDim2.new(1, 0, 0, 48)
+Header.LayoutOrder = 1
+
+local HeaderLayout = Instance.new("UIListLayout", Header)
+HeaderLayout.FillDirection = Enum.FillDirection.Horizontal
+HeaderLayout.Padding = UDim.new(0, 12)
+HeaderLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+local TitleLabel = Instance.new("TextLabel", Header)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Size = UDim2.new(0, 280, 1, 0)
+TitleLabel.Font = Enum.Font.GothamBlack
+TitleLabel.TextSize = 26
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.TextColor3 = Theme.Text
+TitleLabel.Text = "Aurora — RT3"
+TitleLabel.LayoutOrder = 1
+
+local Nav = Instance.new("Frame", Header)
+Nav.Size = UDim2.new(1, -320, 1, 0)
+Nav.BackgroundTransparency = 1
+Nav.LayoutOrder = 2
+
+local NavLayout = Instance.new("UIListLayout", Nav)
+NavLayout.FillDirection = Enum.FillDirection.Horizontal
+NavLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+NavLayout.Padding = UDim.new(0, 10)
+
+local function makeNavButton(text)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.fromOffset(120, 34)
+    btn.Text = text
+    btn.Font = Enum.Font.GothamSemibold
+    btn.TextSize = 14
+    btn.TextColor3 = Theme.Subtle
+    btn.BackgroundColor3 = Theme.Ink
+    btn.AutoButtonColor = false
+    corner(btn, 12)
+stroke(btn, Theme.Stroke, 1, 0.4)
+    btn.Parent = Nav
+    return btn
+end
+
+local Tabs = {}
+local ActiveTab = nil
+
+local Body = Instance.new("Frame", Panel)
+Body.Name = "Body"
+Body.BackgroundTransparency = 1
+Body.Size = UDim2.new(1, 0, 1, -80)
+Body.LayoutOrder = 2
+
+local BodyLayout = Instance.new("UIListLayout", Body)
+BodyLayout.FillDirection = Enum.FillDirection.Horizontal
+BodyLayout.Padding = UDim.new(0, 18)
+BodyLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+
+local function makeTab(name)
+    local frame = Instance.new("Frame", Body)
+    frame.Name = name
+    frame.BackgroundColor3 = Theme.Card
+    frame.Size = UDim2.new(0.5, -9, 1, 0)
+    frame.Visible = false
+    corner(frame, 18)
+stroke(frame, Theme.Stroke, 1, 0.45)
+pad(frame, 18)
+
+    local layout = Instance.new("UIListLayout", frame)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 10)
+
+    Tabs[name] = frame
+    return frame
+end
+
+local function switchTab(name)
+    if ActiveTab == name then return end
+    for tabName, frame in pairs(Tabs) do
+        frame.Visible = (tabName == name)
+    end
+    ActiveTab = name
+    for _, btn in ipairs(Nav:GetChildren()) do
+        if btn:IsA("TextButton") then
+            if btn.Text == name then
+                btn.TextColor3 = Theme.Text
+                btn.BackgroundColor3 = Theme.Accent
+            else
+                btn.TextColor3 = Theme.Subtle
+                btn.BackgroundColor3 = Theme.Ink
+            end
+        end
+    end
+end
+
+local AutofarmTab = makeTab("Autofarm")
+local SettingsTab = makeTab("UI")
+local InfoTab = makeTab("Info")
+
+local AutoBtn = makeNavButton("Autofarm")
+local SettingsBtn = makeNavButton("UI")
+local InfoBtn = makeNavButton("Info")
+
+AutoBtn.MouseButton1Click:Connect(function() switchTab("Autofarm") end)
+SettingsBtn.MouseButton1Click:Connect(function() switchTab("UI") end)
+InfoBtn.MouseButton1Click:Connect(function() switchTab("Info") end)
+
+switchTab("Autofarm")
+
+-- Autofarm controls -------------------------------------
+local function makeSection(parent, title)
+    local section = Instance.new("Frame", parent)
+    section.BackgroundTransparency = 1
+    section.LayoutOrder = #parent:GetChildren() + 1
+    section.Size = UDim2.new(1, 0, 0, 36)
+
+    local label = Instance.new("TextLabel", section)
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.new(1, 0, 0, 24)
+    label.Font = Enum.Font.GothamSemibold
+    label.TextSize = 18
+    label.TextColor3 = Theme.Text
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Text = title
+
+    local line = Instance.new("Frame", section)
+    line.BackgroundColor3 = Theme.Stroke
+    line.BackgroundTransparency = 0.35
+    line.Size = UDim2.new(1, 0, 0, 1)
+    line.Position = UDim2.fromOffset(0, 28)
+
+    return section
+end
+
+local function makeRow(parent, labelText)
+    local row = Instance.new("Frame", parent)
+    row.BackgroundTransparency = 1
+    row.Size = UDim2.new(1, 0, 0, 44)
+
+    local layout = Instance.new("UIListLayout", row)
+    layout.FillDirection = Enum.FillDirection.Horizontal
+    layout.Padding = UDim.new(0, 10)
+    layout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+    local label = Instance.new("TextLabel", row)
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.new(0.45, 0, 1, 0)
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 16
+    label.TextColor3 = Theme.Subtle
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Text = labelText
+
+    return row, label
+end
+
+local function makeCycler(parent, options, default)
+    local button = Instance.new("TextButton", parent)
+    button.Size = UDim2.new(0.55, 0, 1, -6)
+    button.BackgroundColor3 = Theme.Ink
+    button.TextColor3 = Theme.Text
+    button.Font = Enum.Font.Gotham
+    button.TextSize = 16
+    button.AutoButtonColor = false
+    corner(button, 12)
+    stroke(button, Theme.Stroke, 1, 0.4)
+
+    local list = options or {"-"}
+    local index = 1
+    local onChanged = nil
+
+    local function setIndex(i)
+        if #list == 0 then
+            button.Text = "-"
+            index = 0
+            return
+        end
+        index = ((i - 1) % #list) + 1
+        button.Text = list[index]
+        if onChanged then
+            pcall(onChanged, list[index], index)
+        end
+    end
+
+    local function setOptions(new)
+        list = (new and #new > 0) and new or {"-"}
+        if default then
+            local idx = table.find(list, default)
+            if idx then
+                setIndex(idx)
+                return
+            end
+        end
+        setIndex(1)
+    end
+
+    button.MouseButton1Click:Connect(function()
+        setIndex(index + 1)
+    end)
+
+    setOptions(options)
+
+    return {
+        Button = button,
+        Get = function()
+            return list[index], index
+        end,
+        SetOptions = setOptions,
+        Set = function(value)
+            local idx = table.find(list, value)
+            if idx then setIndex(idx) end
+        end,
+        OnChanged = function(cb)
+            onChanged = cb
+        end
+    }
+end
+
+local AutoStatus
+
+makeSection(AutofarmTab, "RT3 Autofarm")
+
+local TycoonRow, TycoonLabel = makeRow(AutofarmTab, "Tycoon status")
+TycoonLabel.TextColor3 = Theme.Subtle
+TycoonLabel.Text = "Ikke oppdaget"
+TycoonLabel.Size = UDim2.new(1, 0, 1, 0)
+
+local TableRow = Instance.new("Frame", AutofarmTab)
+TableRow.BackgroundTransparency = 1
+TableRow.Size = UDim2.new(1, 0, 0, 44)
+local TableRowLayout = Instance.new("UIListLayout", TableRow)
+TableRowLayout.FillDirection = Enum.FillDirection.Horizontal
+TableRowLayout.Padding = UDim.new(0, 10)
+TableRowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+local TableLabel = Instance.new("TextLabel", TableRow)
+TableLabel.BackgroundTransparency = 1
+TableLabel.Size = UDim2.new(0.45, 0, 1, 0)
+TableLabel.Font = Enum.Font.Gotham
+TableLabel.TextSize = 16
+TableLabel.TextColor3 = Theme.Subtle
+TableLabel.TextXAlignment = Enum.TextXAlignment.Left
+TableLabel.Text = "Bord"
+
+local TableCycler = makeCycler(TableRow, {"-"})
+TableCycler.OnChanged(function(name)
+    for _, tbl in ipairs(Auto.Tables) do
+        if tbl.Name == name then
+            Auto.SelectedTable = tbl
+            break
+        end
+    end
+    if AutoStatus and Auto.SelectedTable and not Auto.Running then
+        AutoStatus.TextColor3 = Theme.Text
+        AutoStatus.Text = string.format(
+            "Status: Klar (%s — G%s)",
+            Auto.SelectedTable.Name,
+            table.concat(Auto.GroupIds or {"1"}, ",")
+        )
+    end
+end)
+
+local GroupRow, GroupLabel = makeRow(AutofarmTab, "GroupId")
+local function parseGroupSelection(value)
+    local parsed = {}
+    local text = tostring(value or "")
+    if text:find("&") then
+        for id in text:gmatch("%d+") do
+            parsed[#parsed + 1] = id
+        end
+    elseif text ~= "" and text ~= "-" then
+        parsed[1] = text
+    end
+    if #parsed == 0 then
+        parsed[1] = "1"
+    end
+    return parsed
+end
+
+local GroupCycler = makeCycler(GroupRow, {"1&2", "1", "2", "3", "4"}, "1&2")
+local function updateGroupSelection(value)
+    Auto.GroupLabel = value
+    Auto.GroupIds = parseGroupSelection(value)
+    if AutoStatus and Auto.SelectedTable and not Auto.Running then
+        AutoStatus.TextColor3 = Theme.Text
+        AutoStatus.Text = string.format(
+            "Status: Klar (%s — G%s)",
+            Auto.SelectedTable.Name,
+            table.concat(Auto.GroupIds or {"1"}, ",")
+        )
+    end
+end
+
+updateGroupSelection(GroupCycler.Get())
+GroupCycler.OnChanged(function(value)
+    updateGroupSelection(value)
+end)
+
+local CookRow, CookLabel = makeRow(AutofarmTab, "Oppskrift")
+local CookCycler = makeCycler(CookRow, {"Kitchen", "Kitchen>Oven", "Kitchen>Oven>Kitchen"}, "Kitchen")
+CookCycler.OnChanged(function(_, index)
+    Auto.CookVariant = index
+end)
+
+local ButtonRow2 = Instance.new("Frame", AutofarmTab)
+ButtonRow2.BackgroundTransparency = 1
+ButtonRow2.Size = UDim2.new(1, 0, 0, 44)
+local ButtonRow2Layout = Instance.new("UIListLayout", ButtonRow2)
+ButtonRow2Layout.FillDirection = Enum.FillDirection.Horizontal
+ButtonRow2Layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+ButtonRow2Layout.Padding = UDim.new(0, 12)
+ButtonRow2Layout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+local StartBtn = makeButton(ButtonRow2, "Start")
+local StopBtn = makeButton(ButtonRow2, "Stop")
+StopBtn.BackgroundColor3 = Theme.Ink
+StopBtn.TextColor3 = Theme.Text
+
+local RefreshBtn = makeButton(ButtonRow2, "Refresh")
+RefreshBtn.BackgroundColor3 = Theme.Ink
+
+AutoStatus = Instance.new("TextLabel", AutofarmTab)
+AutoStatus.BackgroundTransparency = 1
+AutoStatus.Size = UDim2.new(1, 0, 0, 24)
+AutoStatus.Font = Enum.Font.Gotham
+AutoStatus.TextSize = 14
+AutoStatus.TextXAlignment = Enum.TextXAlignment.Left
+AutoStatus.TextColor3 = Theme.Subtle
+AutoStatus.Text = "Status: Idle"
+
+Auto.StatusChanged = function(text)
+    AutoStatus.TextColor3 = Theme.Text
+    AutoStatus.Text = "Status: " .. tostring(text)
+end
+
+local function syncTycoon()
+    local ok = refreshTycoon()
+    if ok then
+        TycoonLabel.Text = Auto.Tycoon and ("Funnet: " .. Auto.Tycoon.Name) or "Ikke oppdaget"
+        TycoonLabel.TextColor3 = Theme.Good
+        TableCycler.SetOptions(Auto.TableList)
+        if Auto.SelectedTable then
+            TableCycler.Set(Auto.SelectedTable.Name)
+        elseif Auto.Tables[1] then
+            Auto.SelectedTable = Auto.Tables[1]
+            TableCycler.Set(Auto.SelectedTable.Name)
+        end
+        if Auto.SelectedTable then
+            AutoStatus.TextColor3 = Theme.Text
+            local summary = Auto.GroupIds or {"1"}
+            if type(summary) ~= "table" then
+                summary = parseGroupSelection(summary)
+            end
+            AutoStatus.Text = string.format(
+                "Status: Klar (%s — G%s)",
+                Auto.SelectedTable.Name,
+                table.concat(summary, ",")
+            )
+        else
+            AutoStatus.TextColor3 = Theme.Warn
+            AutoStatus.Text = "Status: Ingen bord funnet"
+        end
+        return true
+    else
+        TycoonLabel.Text = "Fant ikke tycoonen din"
+        TycoonLabel.TextColor3 = Theme.Warn
+        TableCycler.SetOptions({"-"})
+        AutoStatus.TextColor3 = Theme.Warn
+        AutoStatus.Text = "Status: Tycoon mangler"
+        return false
+    end
+end
+
+local autoSyncActive = false
+local tycoonListenerCreated = false
+local function ensureAutoSync()
+    if autoSyncActive then return end
+    autoSyncActive = true
+    task.spawn(function()
+        local attempts = 0
+        while attempts < 30 do
+            attempts += 1
+            if syncTycoon() and Auto.SelectedTable then
+                break
+            end
+            task.wait(1)
+        end
+        autoSyncActive = false
+    end)
+
+    if not tycoonListenerCreated then
+        tycoonListenerCreated = true
+        task.spawn(function()
+            local tycoons = workspace:FindFirstChild("Tycoons") or workspace:WaitForChild("Tycoons", 10)
+            if tycoons then
+                tycoons.ChildAdded:Connect(function()
+                    task.delay(0.2, syncTycoon)
+                end)
+            end
+        end)
+    end
+end
+
+RefreshBtn.MouseButton1Click:Connect(function()
+    local ok = syncTycoon()
+    if ok then
+        AutoStatus.TextColor3 = Theme.Text
+    end
+end)
+
+StartBtn.MouseButton1Click:Connect(function()
+    if Auto.Running then
+        AutoStatus.TextColor3 = Theme.Warn
+        AutoStatus.Text = "Status: Kjører allerede"
+        return
+    end
+
+    local tableName = TableCycler.Get()
+    if not tableName or tableName == "-" then
+        AutoStatus.TextColor3 = Theme.Warn
+        AutoStatus.Text = "Status: Ingen bord valgt"
+        return
+    end
+
+    for _, tbl in ipairs(Auto.Tables) do
+        if tbl.Name == tableName then
+            Auto.SelectedTable = tbl
+            break
+        end
+    end
+
+    updateGroupSelection(GroupCycler.Get())
+    Auto.CookVariant = select(2, CookCycler.Get())
+    AutoStatus.TextColor3 = Theme.Text
+    local groupSummary = table.concat(Auto.GroupIds or {"1"}, ",")
+    AutoStatus.Text = string.format("Status: Starter (%s — G%s)", Auto.SelectedTable.Name, groupSummary)
+    startAuto()
+end)
+
+StopBtn.MouseButton1Click:Connect(function()
+    stopAuto()
+    AutoStatus.TextColor3 = Theme.Subtle
+    AutoStatus.Text = "Status: Stoppet"
+end)
+
+-- UI tab -------------------------------------------------
+makeSection(SettingsTab, "Grensesnitt")
+
+local Hint = Instance.new("TextLabel", SettingsTab)
+Hint.BackgroundTransparency = 1
+Hint.Size = UDim2.new(1, 0, 0, 48)
+Hint.Font = Enum.Font.Gotham
+Hint.TextSize = 14
+Hint.TextColor3 = Theme.Subtle
+Hint.TextWrapped = true
+Hint.Text = "Denne menyen er en ren skallversjon av Aurora-panelet. Alle gamle aimbot/ESP-funksjoner er fjernet slik at du kan fokusere på Restaurant Tycoon 3-autofarmen."
+
+local HideKeybind = Instance.new("TextLabel", SettingsTab)
+HideKeybind.BackgroundTransparency = 1
+HideKeybind.Size = UDim2.new(1, 0, 0, 24)
+HideKeybind.Font = Enum.Font.GothamSemibold
+HideKeybind.TextSize = 16
+HideKeybind.TextColor3 = Theme.Text
+HideKeybind.TextXAlignment = Enum.TextXAlignment.Left
+HideKeybind.Text = "RightShift — vis/skjul"
+
+local function togglePanel()
+    if GateGui.Enabled then return end
+    RootGui.Enabled = not RootGui.Enabled
+end
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        togglePanel()
+    end
+end)
+
+-- Info tab ----------------------------------------------
+makeSection(InfoTab, "Om denne builden")
+
+local InfoText = Instance.new("TextLabel", InfoTab)
+InfoText.BackgroundTransparency = 1
+InfoText.Size = UDim2.new(1, 0, 0, 120)
+InfoText.Font = Enum.Font.Gotham
+InfoText.TextSize = 14
+InfoText.TextColor3 = Theme.Subtle
+InfoText.TextWrapped = true
+InfoText.Text = [[Denne utgaven av Aurora-panelet er strippet for aimbot/ESP og andre Counter Blox-funksjoner. Alt fokus ligger på Restaurant Tycoon 3-automasjon.
+
+• Bruk "Refresh" for å auto-oppdage tycoonen og bordene dine.
+• Start-knappen kjører den innebygde RT3-rutinen til du trykker Stop.
+• Nøkkel-systemet kan endres med getgenv().AuroraKey før du laster scriptet.]]
+
+makeSection(InfoTab, "Kontakter")
+
+local Contact = Instance.new("TextLabel", InfoTab)
+Contact.BackgroundTransparency = 1
+Contact.Size = UDim2.new(1, 0, 0, 32)
+Contact.Font = Enum.Font.Gotham
+Contact.TextSize = 14
+Contact.TextColor3 = Theme.Subtle
+Contact.TextXAlignment = Enum.TextXAlignment.Left
+Contact.Text = "Discord: ProfitCruiser helper"
+
+-- Initial state
+syncTycoon()
+ensureAutoSync()
+
+print("[Aurora RT3] Menu loaded. Unlock with your key to access the autofarm shell.")
